@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { createRoot } from "react-dom/client";
 import { Activity, ArrowUp, BrainCircuit, CirclePause, Paperclip, Settings2, Sparkles } from "lucide-react";
 import "./styles.css";
 
@@ -10,6 +9,7 @@ function App() {
   const [status, setStatus] = useState("checking");
   const [analysis, setAnalysis] = useState(null);
   const [plan, setPlan] = useState(null);
+  const [workerRoutes, setWorkerRoutes] = useState([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState("");
 
@@ -31,6 +31,7 @@ function App() {
     setAnalyzing(true);
     setAnalysis(null);
     setPlan(null);
+    setWorkerRoutes([]);
     setError("");
 
     try {
@@ -56,6 +57,16 @@ function App() {
       ]);
       setAnalysis(analysisResult.analysis);
       setPlan(planResult.plan);
+
+      const routeResults = await Promise.all(
+        planResult.plan.tasks.map(async (task) => {
+          const response = await fetch(`${API_BASE}/route/${encodeURIComponent(task.task_type)}`);
+          if (!response.ok) throw new Error(`Worker routing failed (${response.status})`);
+          const result = await response.json();
+          return { task, route: result };
+        })
+      );
+      setWorkerRoutes(routeResults);
     } catch (requestError) {
       setError(requestError.message || "Unable to process prompt");
     } finally {
@@ -86,13 +97,13 @@ function App() {
 
         <div className="center-stage">
           {!analysis && <div className="welcome-icon"><BrainCircuit size={28} /></div>}
-          {!analysis && <p className="intro">Describe the outcome you want. NEXUS will understand the request, decompose the work, connect task outputs, choose workers later, and validate the result.</p>}
+          {!analysis && <p className="intro">Describe the outcome you want. NEXUS will understand the request, decompose the work, map the best workers, connect outputs, and validate the result.</p>}
 
           <form className="composer" onSubmit={submit}>
             <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Tell NEXUS what you want to accomplish..." rows={4} />
             <div className="composer-footer">
               <button type="button" className="icon-button" aria-label="Attach file"><Paperclip size={18} /></button>
-              <span className="hint">{analyzing ? "Understanding and planning..." : "Stage 3 · Task decomposition"}</span>
+              <span className="hint">{analyzing ? "Understanding, planning and mapping workers..." : "Stage 4 · Worker mapping"}</span>
               <button type="submit" className="send-button" disabled={!prompt.trim() || analyzing}><ArrowUp size={18} /></button>
             </div>
           </form>
@@ -120,7 +131,7 @@ function App() {
                 <span className={analysis.needs_code ? "flag on" : "flag"}>Code</span>
                 <span className={analysis.needs_quality_review ? "flag on" : "flag"}>Quality review</span>
               </div>
-              <small className="analyzer-note">Analyzer: {analysis.analyzer} · No external AI used in this stage</small>
+              <small className="analyzer-note">Analyzer: {analysis.analyzer} · No external AI used</small>
             </section>
           )}
 
@@ -149,6 +160,35 @@ function App() {
                 {plan.notes.map((note) => <div key={note}>• {note}</div>)}
               </div>
               <small className="analyzer-note">Planner: {plan.planner} · No AI workers called</small>
+            </section>
+          )}
+
+          {workerRoutes.length > 0 && (
+            <section className="worker-card">
+              <div className="analysis-header">
+                <div><span className="eyebrow">NEXUS WORKER MAP</span><h2>Capability-based routing</h2></div>
+                <span className="plan-badge">Free-first</span>
+              </div>
+              <div className="worker-list">
+                {workerRoutes.map(({ task, route }) => (
+                  <div className="worker-row" key={task.task_id}>
+                    <div className="worker-task">{task.title}<small>{route.capability} capability</small></div>
+                    <div className="worker-choice">
+                      <strong>{route.recommended_worker_id ?? "No candidate"}</strong>
+                      <small>{route.execution_ready ? "ready to execute" : "recommended profile · connector not ready"}</small>
+                    </div>
+                    <div className="worker-candidates">
+                      {route.candidates.slice(0, 3).map((candidate) => (
+                        <span className="worker-chip" key={candidate.worker_id}>
+                          {candidate.name} · {Math.round(candidate.score)}
+                          {candidate.execution_ready ? " · ready" : " · not connected"}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <small className="analyzer-note">Routing policy: free_first_capability_v1 · quota values are unknown until live connectors/telemetry are added.</small>
             </section>
           )}
         </div>
