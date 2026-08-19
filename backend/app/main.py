@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
+from .prompt_analyzer import analyze_prompt
+from .prompt_models import PromptAnalysisResponse, PromptRequest
 
 app = FastAPI(
     title=settings.app_name,
@@ -30,3 +32,11 @@ def health() -> dict[str, object]:
         "free_only": settings.free_only,
         "background_execution": settings.background_execution,
     }
+
+
+@app.post("/analyze", response_model=PromptAnalysisResponse)
+def analyze(request: PromptRequest) -> PromptAnalysisResponse:
+    return PromptAnalysisResponse(
+        prompt=request.prompt,
+        analysis=analyze_prompt(request.prompt),
+    )
