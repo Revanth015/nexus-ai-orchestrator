@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from .models import IntentAnalysis
+from .prompt_models import IntentAnalysis
 
 
 def _has_any(text: str, phrases: tuple[str, ...]) -> bool:
@@ -98,8 +98,7 @@ def analyze_prompt(prompt: str) -> IntentAnalysis:
         confidence += 10
     confidence = min(confidence, 90.0)
 
-    objective = prompt.strip()
-    objective = re.sub(r"\s+", " ", objective)
+    objective = re.sub(r"\s+", " ", prompt.strip())
 
     return IntentAnalysis(
         objective=objective,
