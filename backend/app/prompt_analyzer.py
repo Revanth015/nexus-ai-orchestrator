@@ -151,6 +151,8 @@ def analyze_prompt(prompt: str) -> IntentAnalysis:
         needs_research=needs_research,
         needs_file_analysis=needs_file,
         needs_current_information=needs_current,
+        needs_data_analysis=needs_data,
+        needs_writing=needs_writing,
         needs_presentation=needs_presentation,
         needs_image=needs_image,
         needs_code=needs_code,
