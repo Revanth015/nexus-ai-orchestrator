@@ -1,0 +1,18 @@
+{
+  "free_only": true,
+  "background_execution_default": false,
+  "max_workflow_alternatives": 3,
+  "max_quality_rework_cycles": 3,
+  "max_workers_per_task": 4,
+  "unknown_quota_policy": "block_auto_execution",
+  "paid_worker_policy": "block",
+  "routing_weights": {
+    "task_capability": 0.30,
+    "quality": 0.20,
+    "accuracy": 0.15,
+    "instruction_following": 0.10,
+    "reliability": 0.10,
+    "efficiency": 0.05,
+    "resource_safety": 0.10
+  }
+}
