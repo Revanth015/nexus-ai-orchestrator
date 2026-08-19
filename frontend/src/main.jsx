@@ -176,16 +176,18 @@ function App() {
                   const recommended = route.recommended_worker_id;
                   return (
                     <div className="worker-row" key={task.task_id}>
-                      <div className="worker-task">{task.title}<small>{route.capability} capability</small></div>
+                      <div className="worker-task">
+                        {task.title}
+                        <small>{route.capability} capability</small>
+                      </div>
                       <div className="worker-choice">
                         <strong>{recommended ?? "No executable worker"}</strong>
                         <small>
-                          {recommended
-                            ? "ready to execute"
-                            : bestProfile
-                              ? `best profile: ${bestProfile} · connector not ready`
-                              : "no suitable worker found"}
+                          {recommended ? "current execution" : "current execution unavailable"}
                         </small>
+                        {bestProfile && bestProfile !== recommended && (
+                          <small>Preferred profile: {bestProfile}</small>
+                        )}
                       </div>
                       <div className="worker-candidates">
                         {route.candidates.slice(0, 3).map((candidate) => (
