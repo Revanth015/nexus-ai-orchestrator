@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
 import { Activity, ArrowUp, BrainCircuit, CirclePause, Paperclip, Settings2, Sparkles } from "lucide-react";
 import "./styles.css";
 
