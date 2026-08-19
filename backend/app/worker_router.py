@@ -32,11 +32,14 @@ class WorkerCandidate(BaseModel):
 class WorkerRouteResponse(BaseModel):
     task_type: str
     capability: str
+    # best_profile_worker_id answers: "Who would be best if connected?"
+    best_profile_worker_id: str | None = None
+    # recommended_worker_id answers: "Who can NEXUS actually use right now?"
     recommended_worker_id: str | None = None
     execution_ready: bool = False
     candidates: list[WorkerCandidate] = Field(default_factory=list)
     fallback_worker_id: str | None = None
-    routing_policy: str = "free_first_capability_v1"
+    routing_policy: str = "free_first_execution_aware_v2"
 
 
 def _capability_score(worker: WorkerProfile, capability: str) -> float:
@@ -49,11 +52,10 @@ def _score(worker: WorkerProfile, capability: str) -> float:
     reliability = float(worker.capabilities.reliability or 0)
     efficiency = float(worker.capabilities.efficiency or 0)
 
-    # Connection/readiness is deliberately a separate factor. A great worker
-    # that is not connected must not be mistaken for an executable worker.
     connected = bool(worker.metadata.get("connected", False))
     readiness_bonus = 15 if connected else 0
-    return round(capability_score * 0.65 + reliability * 0.20 + efficiency * 0.10 + readiness_bonus, 2)
+    raw_score = capability_score * 0.65 + reliability * 0.20 + efficiency * 0.10 + readiness_bonus
+    return round(min(100.0, raw_score), 2)
 
 
 def route_task(task_type: str, *, free_only: bool = True) -> WorkerRouteResponse:
@@ -86,15 +88,19 @@ def route_task(task_type: str, *, free_only: bool = True) -> WorkerRouteResponse
         reverse=True,
     )
 
+    # Keep the ideal profile separate from the executable route. This prevents
+    # an unconnected high-scoring AI from being presented as immediately usable.
+    best_profile = candidates[0] if candidates else None
     executable = [candidate for candidate in candidates if candidate.execution_ready]
-    recommended = candidates[0] if candidates else None
-    fallback = executable[1].worker_id if len(executable) > 1 else (executable[0].worker_id if executable else None)
+    recommended = executable[0] if executable else None
+    fallback = executable[1].worker_id if len(executable) > 1 else None
 
     return WorkerRouteResponse(
         task_type=task_type,
         capability=capability,
+        best_profile_worker_id=best_profile.worker_id if best_profile else None,
         recommended_worker_id=recommended.worker_id if recommended else None,
-        execution_ready=bool(recommended and recommended.execution_ready),
+        execution_ready=bool(recommended),
         candidates=candidates,
         fallback_worker_id=fallback,
     )
