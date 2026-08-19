@@ -17,6 +17,8 @@ class IntentAnalysis(BaseModel):
     needs_research: bool = False
     needs_file_analysis: bool = False
     needs_current_information: bool = False
+    needs_data_analysis: bool = False
+    needs_writing: bool = False
     needs_presentation: bool = False
     needs_image: bool = False
     needs_code: bool = False
