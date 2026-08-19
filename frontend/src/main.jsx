@@ -171,25 +171,35 @@ function App() {
                 <span className="plan-badge">Free-first</span>
               </div>
               <div className="worker-list">
-                {workerRoutes.map(({ task, route }) => (
-                  <div className="worker-row" key={task.task_id}>
-                    <div className="worker-task">{task.title}<small>{route.capability} capability</small></div>
-                    <div className="worker-choice">
-                      <strong>{route.recommended_worker_id ?? "No candidate"}</strong>
-                      <small>{route.execution_ready ? "ready to execute" : "recommended profile · connector not ready"}</small>
+                {workerRoutes.map(({ task, route }) => {
+                  const bestProfile = route.best_profile_worker_id;
+                  const recommended = route.recommended_worker_id;
+                  return (
+                    <div className="worker-row" key={task.task_id}>
+                      <div className="worker-task">{task.title}<small>{route.capability} capability</small></div>
+                      <div className="worker-choice">
+                        <strong>{recommended ?? "No executable worker"}</strong>
+                        <small>
+                          {recommended
+                            ? "ready to execute"
+                            : bestProfile
+                              ? `best profile: ${bestProfile} · connector not ready`
+                              : "no suitable worker found"}
+                        </small>
+                      </div>
+                      <div className="worker-candidates">
+                        {route.candidates.slice(0, 3).map((candidate) => (
+                          <span className="worker-chip" key={candidate.worker_id}>
+                            {candidate.name} · {Math.round(candidate.score)}
+                            {candidate.execution_ready ? " · ready" : " · not connected"}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                    <div className="worker-candidates">
-                      {route.candidates.slice(0, 3).map((candidate) => (
-                        <span className="worker-chip" key={candidate.worker_id}>
-                          {candidate.name} · {Math.round(candidate.score)}
-                          {candidate.execution_ready ? " · ready" : " · not connected"}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
-              <small className="analyzer-note">Routing policy: free_first_capability_v1 · quota values are unknown until live connectors/telemetry are added.</small>
+              <small className="analyzer-note">Routing policy: free_first_execution_aware_v2 · quota values are unknown until live connectors/telemetry are added.</small>
             </section>
           )}
         </div>
