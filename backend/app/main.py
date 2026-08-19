@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .prompt_analyzer import analyze_prompt
 from .prompt_models import PromptAnalysisResponse, PromptRequest
+from .planner_models import PlanResponse
+from .task_planner import build_task_plan
 
 app = FastAPI(
     title=settings.app_name,
@@ -40,3 +42,9 @@ def analyze(request: PromptRequest) -> PromptAnalysisResponse:
         prompt=request.prompt,
         analysis=analyze_prompt(request.prompt),
     )
+
+
+@app.post("/plan", response_model=PlanResponse)
+def plan(request: PromptRequest) -> PlanResponse:
+    analysis = analyze_prompt(request.prompt)
+    return PlanResponse(plan=build_task_plan(analysis))
