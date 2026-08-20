@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
+import json
 import os
+from pathlib import Path
 import re
 import time
 from typing import Any
@@ -17,6 +19,11 @@ load_dotenv()
 # Current free-tier text model selected for the first NEXUS connector.
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 FREE_VERIFIED_MODELS = {DEFAULT_MODEL, "gemini-3.1-flash-lite"}
+
+# Runtime telemetry is local operational state, not source code or a secret.
+# The repository .gitignore excludes runtime/ so this file never goes to GitHub.
+_RUNTIME_DIR = Path(__file__).resolve().parents[1] / "runtime"
+_RUNTIME_FILE = _RUNTIME_DIR / "gemini_telemetry.json"
 
 
 @dataclass
@@ -47,6 +54,7 @@ class GeminiRuntime:
         self.execution_ready = True
         self.quota_status = "unknown"
         self.quota_estimate = None
+        _save_runtime(self)
 
     def record_failure(self, error: str, failure_class: str, latency_ms: float) -> None:
         self.observed_requests += 1
@@ -63,9 +71,73 @@ class GeminiRuntime:
         else:
             self.quota_status = "unknown"
         self.quota_estimate = None
+        _save_runtime(self)
 
 
-_RUNTIME = GeminiRuntime()
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _load_runtime() -> GeminiRuntime:
+    runtime = GeminiRuntime()
+    try:
+        if not _RUNTIME_FILE.exists():
+            return runtime
+        payload = json.loads(_RUNTIME_FILE.read_text(encoding="utf-8"))
+        if payload.get("schema_version") != 1:
+            return runtime
+        for name in (
+            "configured",
+            "execution_ready",
+            "observed_requests",
+            "successful_requests",
+            "failed_requests",
+            "last_success_at",
+            "last_failure_at",
+            "last_error",
+            "last_latency_ms",
+            "quota_status",
+            "quota_estimate",
+            "failure_class",
+        ):
+            if name in payload:
+                setattr(runtime, name, payload[name])
+        runtime._recent_results = [bool(item) for item in payload.get("recent_results", [])][-20:]
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        # Corrupt or unreadable local telemetry must never prevent NEXUS startup.
+        return GeminiRuntime()
+    return runtime
+
+
+def _save_runtime(runtime: GeminiRuntime) -> None:
+    payload = {
+        "schema_version": 1,
+        "configured": runtime.configured,
+        "execution_ready": runtime.execution_ready,
+        "observed_requests": runtime.observed_requests,
+        "successful_requests": runtime.successful_requests,
+        "failed_requests": runtime.failed_requests,
+        "last_success_at": runtime.last_success_at,
+        "last_failure_at": runtime.last_failure_at,
+        "last_error": runtime.last_error,
+        "last_latency_ms": runtime.last_latency_ms,
+        "quota_status": runtime.quota_status,
+        "quota_estimate": runtime.quota_estimate,
+        "failure_class": runtime.failure_class,
+        "recent_results": runtime._recent_results,
+    }
+    try:
+        _RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        temporary = _RUNTIME_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        temporary.replace(_RUNTIME_FILE)
+    except OSError:
+        # Persistence is best-effort. A filesystem problem must not break AI calls.
+        pass
+
+
+_RUNTIME = _load_runtime()
 
 
 class GeminiTestRequest(BaseModel):
@@ -96,10 +168,6 @@ class GeminiStatus(BaseModel):
     failure_class: str | None = None
     last_error: str | None = None
     note: str
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _model() -> str:
