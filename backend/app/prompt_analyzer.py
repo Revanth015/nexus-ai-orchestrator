@@ -55,7 +55,12 @@ def analyze_prompt(prompt: str) -> IntentAnalysis:
         "write", "rewrite", "report", "essay", "summary", "summarize", "proposal", "email",
         "document", "memo", "case study", "content",
     ))
-    needs_quality = not _has_any(text, (
+    needs_quality = _has_any(text, (
+        "quality review", "quality check", "review the work", "review the result", "review the output",
+        "validate the result", "validate the output", "validate the work", "check the result",
+        "check the output", "check the work", "proofread", "audit the result", "audit the output",
+        "verify the result", "verify the output", "quality assurance", "qa review",
+    )) and not _has_any(text, (
         "don't review", "do not review", "skip review", "no quality check", "without review",
     ))
 
