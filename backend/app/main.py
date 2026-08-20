@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
+from .execution import ExecutionRequest, ExecutionResponse, execute_task
 from .gemini_connector import GeminiStatus, GeminiTestRequest, status as gemini_status, test_connection
 from .prompt_analyzer import analyze_prompt
 from .prompt_models import PromptAnalysisResponse, PromptRequest
@@ -67,6 +68,15 @@ def workers() -> dict[str, object]:
 def route(task_type: str) -> WorkerRouteResponse:
     """Recommend workers using capability priors and free-first execution readiness."""
     return route_task(task_type, free_only=settings.free_only)
+
+
+@app.post("/execute", response_model=ExecutionResponse)
+def execute(request: ExecutionRequest) -> ExecutionResponse:
+    """Route one explicit task to an execution-ready free worker and run it."""
+    try:
+        return execute_task(request, free_only=settings.free_only)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/connectors/gemini/status", response_model=GeminiStatus)
