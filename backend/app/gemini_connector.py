@@ -10,8 +10,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-DEFAULT_MODEL = "gemini-3.1-flash-lite"
-FREE_VERIFIED_MODELS = {DEFAULT_MODEL}
+# Current free-tier text model selected for the first NEXUS connector.
+# Google lists Gemini 3.5 Flash-Lite as free of charge on the Free Tier.
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
+FREE_VERIFIED_MODELS = {DEFAULT_MODEL, "gemini-3.1-flash-lite"}
 
 
 @dataclass
@@ -40,6 +42,7 @@ class GeminiRuntime:
         self._recent_results.append(True)
         self._recent_results = self._recent_results[-20:]
         self.execution_ready = True
+        # Never infer an exact remaining quota from a successful request.
         self.quota_status = "unknown"
         self.quota_estimate = None
 
@@ -64,7 +67,11 @@ _RUNTIME = GeminiRuntime()
 
 
 class GeminiTestRequest(BaseModel):
-    prompt: str = Field(default="Reply with exactly: NEXUS Gemini connector is working.", min_length=1, max_length=4000)
+    prompt: str = Field(
+        default="Reply with exactly: NEXUS Gemini connector is working.",
+        min_length=1,
+        max_length=4000,
+    )
 
 
 class GeminiStatus(BaseModel):
@@ -104,17 +111,30 @@ def _api_key() -> str | None:
 def _classify_error(error: Exception) -> str:
     text = str(error).lower()
     status = getattr(error, "status_code", None) or getattr(error, "code", None)
-    if status in {401, 403} or any(term in text for term in ("api key", "authentication", "unauthenticated", "permission denied", "forbidden")):
+    if status in {401, 403} or any(
+        term in text
+        for term in ("api key", "authentication", "unauthenticated", "permission denied", "forbidden")
+    ):
         return "authentication"
-    if status in {429} or any(term in text for term in ("quota", "rate limit", "resource exhausted", "too many requests", "429")):
+    if status == 429 or any(
+        term in text
+        for term in ("quota", "rate limit", "resource exhausted", "too many requests", "429")
+    ):
         return "quota" if "quota" in text or "resource exhausted" in text else "rate_limit"
-    if status in {408, 500, 502, 503, 504} or any(term in text for term in ("timeout", "temporarily unavailable", "service unavailable")):
+    if status in {408, 500, 502, 503, 504} or any(
+        term in text for term in ("timeout", "temporarily unavailable", "service unavailable")
+    ):
         return "temporary"
     return "provider_error"
 
 
 def _clean_error(error: Exception) -> str:
-    text = re.sub(r"(?:api[_ -]?key|key)\s*[:=]\s*['\"]?[^\s'\"]+", "API_KEY=[REDACTED]", str(error), flags=re.IGNORECASE)
+    text = re.sub(
+        r"(?:api[_ -]?key|key)\s*[:=]\s*['\"]?[^\s'\"]+",
+        "API_KEY=[REDACTED]",
+        str(error),
+        flags=re.IGNORECASE,
+    )
     return text[:500]
 
 
@@ -140,7 +160,8 @@ def status() -> GeminiStatus:
         last_error=_RUNTIME.last_error,
         note=(
             "Exact remaining quota is not claimed. NEXUS records observed telemetry and provider limit errors."
-            if configured else "Set GEMINI_API_KEY locally, then run the connector test. No key is stored in Git."
+            if configured
+            else "Set GEMINI_API_KEY locally, then run the connector test. No key is stored in Git."
         ),
     )
 
