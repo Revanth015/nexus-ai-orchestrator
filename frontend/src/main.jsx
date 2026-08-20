@@ -11,8 +11,20 @@ function App() {
   const [analysis, setAnalysis] = useState(null);
   const [plan, setPlan] = useState(null);
   const [workerRoutes, setWorkerRoutes] = useState([]);
+  const [workers, setWorkers] = useState([]);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState("");
+
+  const refreshWorkers = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/workers`);
+      if (!response.ok) throw new Error("Worker registry unavailable");
+      const result = await response.json();
+      setWorkers(result.workers ?? []);
+    } catch {
+      setWorkers([]);
+    }
+  };
 
   useEffect(() => {
     fetch(`${API_BASE}/health`)
@@ -20,7 +32,10 @@ function App() {
         if (!response.ok) throw new Error("Backend unavailable");
         return response.json();
       })
-      .then(() => setStatus("ready"))
+      .then(() => {
+        setStatus("ready");
+        refreshWorkers();
+      })
       .catch(() => setStatus("offline"));
   }, []);
 
@@ -68,12 +83,19 @@ function App() {
         })
       );
       setWorkerRoutes(routeResults);
+      await refreshWorkers();
     } catch (requestError) {
       setError(requestError.message || "Unable to process prompt");
     } finally {
       setAnalyzing(false);
     }
   };
+
+  const gemini = workers.find((worker) => worker.worker_id === "gemini");
+  const geminiReady = Boolean(gemini?.metadata?.execution_ready);
+  const geminiConfigured = Boolean(gemini?.metadata?.connector_configured);
+  const geminiObserved = gemini?.resource?.observed_requests ?? 0;
+  const geminiQuota = gemini?.resource?.estimated_remaining;
 
   return (
     <main className="shell">
@@ -100,11 +122,32 @@ function App() {
           {!analysis && <div className="welcome-icon"><BrainCircuit size={28} /></div>}
           {!analysis && <p className="intro">Describe the outcome you want. NEXUS will understand the request, decompose the work, map the best workers, connect outputs, and validate the result.</p>}
 
+          <section className="worker-card connector-status-card">
+            <div className="analysis-header">
+              <div><span className="eyebrow">LIVE WORKER STATUS</span><h2>AI connector readiness</h2></div>
+              <span className="plan-badge">Free-only</span>
+            </div>
+            <div className="worker-list">
+              <div className="worker-row">
+                <div className="worker-task">Gemini<small>google · {gemini?.metadata?.model ?? "connector"}</small></div>
+                <div className="worker-choice">
+                  <strong>{geminiReady ? "🟢 EXECUTION READY" : geminiConfigured ? "🟡 CONFIGURED · NOT TESTED" : "⚪ NOT CONFIGURED"}</strong>
+                  <small>{geminiReady ? "NEXUS can route executable work here" : "Waiting for a successful connector call"}</small>
+                </div>
+                <div className="worker-candidates">
+                  <span className="worker-chip">Observed requests · {geminiObserved}</span>
+                  <span className="worker-chip">Quota · {geminiQuota == null ? "unknown" : `${geminiQuota}%`}</span>
+                </div>
+              </div>
+            </div>
+            <small className="analyzer-note">Live registry telemetry · quota is never invented when the provider does not expose it.</small>
+          </section>
+
           <form className="composer" onSubmit={submit}>
             <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Tell NEXUS what you want to accomplish..." rows={4} />
             <div className="composer-footer">
               <button type="button" className="icon-button" aria-label="Attach file"><Paperclip size={18} /></button>
-              <span className="hint">{analyzing ? "Understanding, planning and mapping workers..." : "Stage 4 · Worker mapping"}</span>
+              <span className="hint">{analyzing ? "Understanding, planning and mapping workers..." : "Stage 5 · Live worker connectors"}</span>
               <button type="submit" className="send-button" disabled={!prompt.trim() || analyzing}><ArrowUp size={18} /></button>
             </div>
           </form>
@@ -182,12 +225,8 @@ function App() {
                       </div>
                       <div className="worker-choice">
                         <strong>{recommended ?? "No executable worker"}</strong>
-                        <small>
-                          {recommended ? "current execution" : "current execution unavailable"}
-                        </small>
-                        {bestProfile && bestProfile !== recommended && (
-                          <small>Preferred profile: {bestProfile}</small>
-                        )}
+                        <small>{recommended ? "current execution" : "current execution unavailable"}</small>
+                        {bestProfile && bestProfile !== recommended && <small>Preferred profile: {bestProfile}</small>}
                       </div>
                       <div className="worker-candidates">
                         {route.candidates.slice(0, 3).map((candidate) => (
