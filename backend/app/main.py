@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
+from .gemini_connector import GeminiStatus, GeminiTestRequest, status as gemini_status, test_connection
 from .prompt_analyzer import analyze_prompt
 from .prompt_models import PromptAnalysisResponse, PromptRequest
 from .planner_models import PlanResponse
@@ -54,15 +55,33 @@ def plan(request: PromptRequest) -> PlanResponse:
 
 @app.get("/workers")
 def workers() -> dict[str, object]:
-    """Return the current worker registry without contacting external providers."""
+    """Return the current worker registry with live connector telemetry."""
     return {
         "free_only": settings.free_only,
         "workers": [worker.model_dump(mode="json") for worker in list_workers()],
-        "note": "Capability scores are initial routing priors; quota values are not live until connectors are added.",
+        "note": "Capability scores are initial routing priors; connector telemetry updates readiness and observed resource state.",
     }
 
 
 @app.get("/route/{task_type}", response_model=WorkerRouteResponse)
 def route(task_type: str) -> WorkerRouteResponse:
-    """Recommend workers using capability priors and free-first policy."""
+    """Recommend workers using capability priors and free-first execution readiness."""
     return route_task(task_type, free_only=settings.free_only)
+
+
+@app.get("/connectors/gemini/status", response_model=GeminiStatus)
+def gemini_connector_status() -> GeminiStatus:
+    """Return Gemini configuration and observed telemetry without making a model call."""
+    return gemini_status()
+
+
+@app.post("/connectors/gemini/test")
+def gemini_connector_test(request: GeminiTestRequest) -> dict[str, object]:
+    """Make one explicit Gemini test call. This endpoint never runs automatically."""
+    try:
+        return {
+            "status": "ok",
+            "result": test_connection(request.prompt),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
