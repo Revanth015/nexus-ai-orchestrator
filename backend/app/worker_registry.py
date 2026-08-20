@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .gemini_connector import runtime_metadata
 from .models import CapabilityScores, FreeStatus, ResourceState, WorkerProfile, WorkerType
 
 
@@ -74,9 +75,26 @@ _INITIAL_WORKERS = [
 ]
 
 
+def _apply_live_telemetry(worker: WorkerProfile) -> WorkerProfile:
+    if worker.worker_id != "gemini":
+        return worker
+
+    live = runtime_metadata()
+    worker.metadata.update(live)
+    worker.resource.quota_known = bool(live.get("quota_known", False))
+    worker.resource.estimated_remaining = live.get("estimated_remaining")
+    worker.resource.observed_requests = int(live.get("observed_requests", 0))
+    worker.resource.last_error = live.get("last_error")
+    if live.get("execution_ready"):
+        worker.resource.free_status = FreeStatus.MEASURED_FREE
+    elif live.get("quota_status") in {"exhausted_or_limited"}:
+        worker.resource.free_status = FreeStatus.EXHAUSTED
+    return worker
+
+
 def list_workers() -> list[WorkerProfile]:
-    """Return fresh copies so request-time telemetry cannot mutate registry constants."""
-    return [worker.model_copy(deep=True) for worker in _INITIAL_WORKERS]
+    """Return fresh copies and overlay live connector telemetry where available."""
+    return [_apply_live_telemetry(worker.model_copy(deep=True)) for worker in _INITIAL_WORKERS]
 
 
 def get_worker(worker_id: str) -> WorkerProfile | None:
