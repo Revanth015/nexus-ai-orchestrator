@@ -1,440 +1,237 @@
 # NEXUS — Project Context & Stage Tracker
 
-> **Purpose:** Persistent handoff document for future development sessions. Read this file before making architectural changes so the current project state, constraints, decisions, and next stage are clear.
+> Read this file first in every new NEXUS development chat. Continue from the current stage; do not restart the architecture discussion.
 
-## 1. Project identity
+## Project
+- Name: NEXUS — AI Orchestrator
+- Repository: `Revanth015/nexus-ai-orchestrator`
+- Local path: `D:\Projects\nexus-ai-orchestrator`
+- Goal: corporate-ready, free-first multi-AI orchestration. User gives one prompt; NEXUS understands it, decomposes it, selects suitable workers, connects outputs to downstream tasks, quality-checks results, reworks when needed, and immediately falls back when a worker is unavailable/quota-limited.
 
-**Name:** NEXUS — AI Orchestrator
+## Non-negotiable requirements
+1. Free AI only; never silently use paid APIs/models.
+2. Never invent exact remaining quota.
+3. If quota is not exposed, mark it unknown and estimate only from observed telemetry, rate-limit/quota errors and reset information when observable.
+4. Immediate fallback on quota, rate-limit, authentication, temporary or recoverable connector failures.
+5. Free-first routing.
+6. Background execution must be controllable and default OFF.
+7. Adding a new AI/provider should be easy and isolated from the orchestration core.
+8. Quality checks must be applied to substantial outputs; rework until satisfactory or only non-material issues remain.
+9. NEXUS should compare/mix multiple worker combinations for difficult tasks.
+10. Never commit API keys/secrets.
+11. Build in stages: build → pull → run → test → fix → only then advance.
 
-**Repository:** `Revanth015/nexus-ai-orchestrator`
+## Runtime
+- Windows
+- Python 3.11.2
+- Node 24.18.0
+- npm 11.x; use `npm.cmd` because PowerShell blocks `npm.ps1`
+- Backend: FastAPI/Uvicorn
+- Frontend: React/Vite
+- Frontend: `http://localhost:5173/`
+- Backend: `http://127.0.0.1:8000/`
+- Health: `http://127.0.0.1:8000/health`
+- venv: `backend\.venv`
+- CMD activation: `backend\.venv\Scripts\activate.bat`
 
-**Local path used by developer:** `D:\Projects\nexus-ai-orchestrator`
+## Stages
 
-**Primary goal:** Build a corporate-ready, free-first multi-AI orchestration system. The user gives NEXUS one natural-language request. NEXUS understands it, decomposes it into tasks, maps each task to the most suitable AI/tool, connects outputs between tasks, validates quality, retries/reworks when necessary, and falls back to another worker when a preferred AI is unavailable or reaches a quota/resource limit.
-
-## 2. Core product vision
-
-NEXUS is intended to act as a bridge between the user and multiple AI systems rather than as another single chatbot.
-
-The intended flow is:
-
-```text
-User prompt
-    ↓
-NEXUS understands intent
-    ↓
-Task decomposition
-    ↓
-Task/dependency graph
-    ↓
-Capability + free-resource aware routing
-    ↓
-Execute workers
-    ↓
-Pass outputs as inputs to downstream workers
-    ↓
-Quality review
-    ↓
-PASS → final output
-REWORK → relevant task(s) again
-FAIL / QUOTA → immediate fallback worker
-```
-
-Examples:
-- Perplexity research output can become Gemini presentation input.
-- File analysis can feed data analysis.
-- Research + analysis + files can feed PPT generation.
-- Final presentation can pass through a quality gate.
-- Image, code, report, spreadsheet, research, presentation and other task types should eventually be supported.
-
-## 3. Hard product constraints
-
-1. **Free AI only.** Do not design the system around paid APIs or paid model access.
-2. **No fake quota values.** If a provider exposes an actual quota/usage value, use it. If not, mark quota as unknown and estimate only from observed telemetry.
-3. **Unknown quota must be handled gracefully.** NEXUS should predict/estimate availability from observed usage, failures, rate limits and responses when exact remaining quota is unavailable.
-4. **Immediate fallback.** If a selected AI fails because of quota, rate limit, authentication, temporary availability, or another recoverable connector failure, NEXUS should reroute to the best eligible fallback instead of getting stuck.
-5. **Free-first routing.** Paid/exhausted workers must not be selected when free-only mode is enabled.
-6. **Background execution must be controllable.** The UI must provide a way to stop/disable background operation when NEXUS is not in use.
-7. **Easy worker addition.** Adding a new AI/provider should require minimal configuration and should not require rewriting the orchestration core.
-8. **Quality matters.** Every substantial task should have an appropriate quality check. NEXUS should iterate/rework until the result is acceptable, or stop when only minor issues remain that do not materially affect the requested outcome.
-9. **Multiple combinations.** NEXUS should be able to compare/mix worker combinations rather than always using one fixed AI per task type.
-10. **No secrets in Git.** API keys/tokens must stay in local environment/config files ignored by Git.
-11. **Stage-by-stage development.** After every meaningful build stage, run the program and test before adding the next major capability. Do not dump large batches of untested changes.
-
-## 4. Current technology/runtime
-
-- OS: Windows
-- IDE: Visual Studio / VS Code-style workflow as used by developer
-- Python: 3.11.2
-- Node: 24.18.0
-- npm: 11.x, invoked as `npm.cmd` because PowerShell execution policy blocks `npm.ps1`
-- Backend: Python + FastAPI/Uvicorn
-- Frontend: React + Vite
-- Repository branch: `main`
-- Frontend local URL: `http://localhost:5173/`
-- Backend local URL: `http://127.0.0.1:8000/`
-- Backend health: `http://127.0.0.1:8000/health`
-- Python virtual environment: `backend\.venv`
-- Activation from CMD: `backend\.venv\Scripts\activate.bat`
-
-## 5. Important local setup notes
-
-PowerShell execution policy caused:
-
-```text
-npm.ps1 cannot be loaded because running scripts is disabled
-```
-
-Use `npm.cmd` in CMD/terminal commands.
-
-There was also a temporary npm TLS/certificate problem (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`) caused by the local network certificate chain. A later Wi-Fi change allowed npm installation to work. Do not disable SSL verification as a permanent solution.
-
-## 6. Architecture already implemented
-
-### Stage 1 — Base interface + backend connection
-**Status: PASSED**
-
-Verified:
-- React frontend loads.
-- FastAPI backend runs.
+### Stage 1 — Base interface/backend
+**PASSED**
+- React/Vite UI works.
+- FastAPI works.
 - Frontend/backend health communication works.
-- UI shows `System ready` when backend is available.
-- Free-only mode is visible.
-- Background execution is currently off by default.
+- `System ready`, Free-only and Background-off states work.
 
 ### Stage 2 — Prompt understanding
-**Status: PASSED**
+**PASSED**
+- Local deterministic analyzer; no external AI used.
+- Detects research, file analysis, data analysis, writing, presentation, image generation, coding, current information and quality review.
+- Detects semantic visual terms including infographic, diagram, visual, illustration, poster, graphic, flowchart, mind map, concept art, banner and thumbnail.
+- Detects deliverables, requirements and dependencies.
+- Confidence is heuristic, not true AI confidence; later it should be cross-validated with AI-assisted interpretation.
 
-Implemented deterministic local first-pass analyzer.
-
-Current analyzer concept:
-- No external AI call.
-- Detects task types.
-- Detects deliverables.
-- Detects requirements.
-- Detects dependencies.
-- Detects current-information needs.
-- Detects research/file/data/presentation/image/code/writing needs.
-- Adds quality review by default unless explicitly disabled.
-- Handles semantic visual terms such as infographic, diagram, visual, illustration, poster, graphic, flowchart, mind map, concept art, banner, thumbnail, etc.
-
-Important current limitation:
-- The displayed confidence is heuristic, not true AI confidence. Later it should be combined with AI-assisted interpretation and cross-validation.
-
-### Stage 3 — Task decomposition / workflow graph
-**Status: PASSED**
-
-NEXUS now creates executable task plans with:
-- task ID
-- task type
-- title
-- dependencies
-- inputs
-- outputs
-- status
-- quality gate
+### Stage 3 — Task decomposition/workflow graph
+**PASSED**
+Creates tasks with IDs, types, titles, dependencies, inputs, outputs, status and quality gates.
 
 Validated example:
-
 ```text
-1. Research and source evidence
-      → research_brief
-2. Inspect supplied files
-      → file_analysis
-3. Analyse data and derive insights
-      inputs: research_brief, file_analysis
-      → analysis_findings
-4. Create the presentation
-      inputs: research_brief, file_analysis, analysis_findings
-      → presentation_draft
-5. Review the work and decide PASS or REWORK
-      inputs: research_brief, file_analysis, analysis_findings, presentation_draft
-      → quality gate
+1 Research → research_brief
+2 File analysis → file_analysis
+3 Data analysis ← research_brief + file_analysis → analysis_findings
+4 Presentation ← research_brief + file_analysis + analysis_findings → presentation_draft
+5 Quality review ← all previous artifacts → PASS/REWORK quality gate
 ```
-
-This dependency graph is a core NEXUS feature and must not be replaced with a simple flat prompt list.
+This must remain a dependency graph, not a flat list.
 
 ### Stage 4 — Worker registry + capability routing
-**Status: PASSED**
-
-Implemented worker profiles and capability-based routing.
-
-Current conceptual workers include:
-- Perplexity — research-oriented
-- Gemini — general/multimodal/presentation-oriented
-- Claude — reasoning/coding/document-oriented
+**PASSED**
+Current conceptual workers:
+- Perplexity — research
+- Gemini — general/multimodal/presentation
+- Claude — reasoning/coding/documents
 - NEXUS Local Tools
 - NEXUS Local Validator
 
-Each worker has capability/reliability/efficiency/resource metadata.
-
-Routing separates two concepts:
-
+Routing distinguishes:
 ```text
-Preferred profile
-= best worker for the task if connected/available
-
-Current execution
-= worker NEXUS can actually execute right now
+Preferred profile = best worker for the task if connected/available
+Current execution = worker NEXUS can actually execute now
 ```
-
-This distinction was explicitly validated in the UI.
-
-Example:
-
+Example validated in UI:
 ```text
-Research
-Preferred profile: perplexity
-Current execution: local-tools
-
-Presentation
-Preferred profile: gemini
-Current execution: local-tools
+Research: preferred Perplexity, current execution Local Tools
+Presentation: preferred Gemini, current execution Local Tools
 ```
+Unconnected workers are not presented as executable. Scores are capped at 100. Policy: `free_first_execution_aware_v2`.
 
-Unconnected workers are displayed as `not connected` rather than being falsely presented as executable.
+## Stage 5 — Gemini connector
+**BUILT — PENDING USER LOCAL TEST**
 
-Scores are capped at 100.
+The first real connector is Gemini through Google's official `google-genai` Python SDK.
 
-Current routing policy label:
-`free_first_execution_aware_v2`
+Files/changes:
+- `backend/app/gemini_connector.py` — connector + telemetry + failure classification
+- `backend/.env.example` — local secret template
+- `backend/requirements.txt` — `google-genai` dependency
+- `backend/app/main.py` — Gemini status/test endpoints
+- `backend/app/worker_registry.py` — live Gemini readiness overlay
 
-Quota values are currently unknown until live connectors/telemetry are added.
+### Free-only policy for Stage 5
+- Default model: `gemini-3.1-flash-lite`.
+- This model is in NEXUS's verified-free allowlist for this stage based on the current Google Gemini API pricing documentation checked during development.
+- Connector rejects a model outside the verified-free allowlist.
+- No paid model is automatically selected.
+- Connector never calls Gemini automatically at backend startup; the test is explicit.
 
-## 7. Current frontend behavior
+### Connector telemetry
+Tracks:
+- configured/authentication state
+- execution readiness
+- observed requests
+- successes/failures
+- last success/failure
+- latency
+- failure class
+- quota status
 
-The main UI currently displays, after prompt submission:
+Failure classes include:
+- authentication
+- quota
+- rate_limit
+- temporary
+- provider_error
 
-1. **NEXUS INTENT** — request analysis
-2. **NEXUS WORKFLOW** — execution plan
-3. **NEXUS WORKER MAP** — capability-based routing
+Exact remaining quota is never fabricated. Current exact quota is unknown unless a provider exposes it.
 
-The UI currently fetches:
+### Stage 5 endpoints
+```text
+GET  http://127.0.0.1:8000/connectors/gemini/status
+POST http://127.0.0.1:8000/connectors/gemini/test
+```
+The POST test makes one real model call only when explicitly invoked.
+
+### Stage 5 user test
+After pulling:
+```cmd
+cd D:\Projects\nexus-ai-orchestrator
+cd backend
+.venv\Scripts\activate.bat
+pip install -r requirements.txt
+copy .env.example .env
+```
+Edit `backend\.env` and set:
+```text
+GEMINI_API_KEY=YOUR_REAL_KEY
+```
+Never commit `.env` or the key.
+
+Start:
+```cmd
+uvicorn app.main:app --reload
+```
+Check status first:
+```text
+http://127.0.0.1:8000/connectors/gemini/status
+```
+Then explicitly POST the test request. The test should return Gemini text and then the worker registry should show Gemini as connected/execution-ready.
+
+**Do not mark Stage 5 passed until the user performs this local test successfully.**
+
+## Current frontend
+After prompt submission it shows:
+1. NEXUS INTENT
+2. NEXUS WORKFLOW
+3. NEXUS WORKER MAP
+
+Current frontend calls:
 - `/health`
 - `/analyze`
 - `/plan`
 - `/route/{task_type}`
 
-The worker map displays:
-- task title
-- capability
-- current execution worker
-- preferred profile when different
-- top candidate workers and scores
-- ready/not-connected status
+Gemini connector controls are not yet exposed in the UI; Stage 5 backend validation comes first.
 
-## 8. Recent bug fixed
+## Known fixes
+- npm PowerShell issue: use `npm.cmd`.
+- Temporary npm TLS certificate issue was resolved by changing Wi-Fi; do not permanently disable SSL verification.
+- Stage 4 frontend break fixed by importing `createRoot` from `react-dom/client`.
 
-Stage 4 temporarily broke the frontend because `createRoot` was used without importing it from `react-dom/client` in `frontend/src/main.jsx`.
+## Next stages after Gemini validation
+1. Add real fallback execution and quota/rate-limit routing.
+2. Add Perplexity connector.
+3. Add Claude connector.
+4. Connect task artifacts so worker output becomes downstream worker input.
+5. Add real execution-state UI.
+6. Add quality/rework engine.
+7. Add multi-combination optimization.
+8. Add background execution with explicit ON/OFF controls.
+9. Add easier worker/provider configuration.
 
-It was fixed by adding:
+## Future quality engine
+Classify output and validate appropriately:
+- Research: factual/source quality
+- Data: calculations/assumptions/consistency
+- PPT: narrative/evidence/slide structure/readability/factual consistency
+- Reports: structure/evidence/logic/completeness/writing
+- Images: prompt adherence/visual clarity/label correctness
+- Code: syntax/tests/functional requirements
 
-```js
-import { createRoot } from "react-dom/client";
-```
-
-The normal NEXUS interface was then restored and Stage 4 was revalidated.
-
-## 9. Current project status
-
-### COMPLETED
-
-- [x] Git repository connected
-- [x] Local clone working
-- [x] Backend virtual environment
-- [x] FastAPI health endpoint
-- [x] React/Vite interface
-- [x] Frontend/backend connection
-- [x] Free-only mode indicator
-- [x] Background-off state indicator
-- [x] Prompt intent analysis
-- [x] Semantic image/task detection
-- [x] Task decomposition
-- [x] Dependency-aware workflow graph
-- [x] Worker registry
-- [x] Capability mapping
-- [x] Preferred worker vs executable worker distinction
-- [x] Free-first routing
-- [x] Fallback candidate representation
-- [x] Unknown quota representation
-
-### NOT YET IMPLEMENTED / NEXT
-
-**Stage 5 — Real free AI connectors** is the next major stage.
-
-Do NOT assume it has started merely because the worker profiles exist.
-
-Planned order:
-1. Add first real free connector (initial candidate: Gemini, subject to verifying current free-access mechanism before implementation).
-2. Keep credentials local and out of Git.
-3. Test one simple request.
-4. Record telemetry.
-5. Mark worker connected/executable only after successful test.
-6. Add failure/quota handling.
-7. Then add Perplexity connector.
-8. Then add Claude connector.
-9. Validate routing/fallback with real workers.
-
-## 10. Stage 5 connector requirements
-
-Each connector should expose, as far as legitimately observable:
-
+Quality loop:
 ```text
-provider
-connected
-free_only
-execution_ready
-authentication_status
-quota_status
-quota_exact_or_unknown
-quota_estimate
-usage_observed
-last_success
-last_failure
-failure_reason
-latency
-model/capability metadata
+Worker output → Quality evaluator → PASS → final
+                         ↓
+                       REWORK → relevant task/worker → review again
 ```
+Stop when satisfactory or only non-material issues remain; avoid endless retries.
 
-Never invent exact remaining quota.
-
-If the provider does not expose remaining quota, use:
-
+## Future multi-worker optimization
+NEXUS should compare combinations such as:
 ```text
-unknown exact quota
-+
-observed usage
-+
-rate-limit/quota errors
-+
-request success/failure history
-+
-reset-window information if observable
-```
-
-to estimate availability.
-
-## 11. Future quality engine
-
-The final system should classify the requested output and apply appropriate checks:
-
-- Information/research → factual/source quality
-- Data analysis → calculations, assumptions, consistency
-- Presentation → narrative, evidence, slide structure, readability, factual consistency
-- Report → structure, evidence, logic, completeness, writing quality
-- Image → prompt adherence, visual clarity, correctness of labels/content when applicable
-- Code → syntax/tests, functional behavior, requirements coverage
-
-Quality loop concept:
-
-```text
-Worker output
-   ↓
-Quality evaluator(s)
-   ↓
-PASS ─────────────→ final
-   │
- REWORK
-   ↓
-Relevant task/worker
-   ↓
-Quality check again
-```
-
-The system should avoid endless retries. Stop on a satisfactory result or a result with only non-material/minor issues according to the configured threshold.
-
-## 12. Future multi-worker optimization
-
-NEXUS should eventually compare multiple viable worker combinations for difficult jobs.
-
-Example:
-
-```text
-Option A:
 Perplexity → Gemini → Local Validator
-
-Option B:
 Gemini → Claude → Local Validator
-
-Option C:
 Perplexity → Claude → Gemini → Local Validator
 ```
+Consider task fit, output quality, free availability, estimated resource remaining, reliability, latency, failure history, dependency compatibility and output-format compatibility.
 
-The selection should consider:
-- task fit
-- output quality
-- free availability
-- estimated resource remaining
-- reliability
-- latency
-- failure history
-- dependency compatibility
-- output format compatibility
+## Background requirement
+Background execution must remain controllable and default OFF. Future UI states: ON / OFF / paused / stopped. Never implement uncontrolled background work.
 
-## 13. Background execution requirement
-
-NEXUS should eventually support background operation but must allow the user to turn it off when not in use.
-
-Future UI should make the state explicit:
-- Background ON
-- Background OFF
-- paused/stopped
-
-Do not implement uncontrolled background execution.
-
-## 14. Corporate-ready direction
-
-The UI should remain smooth and professional but should not become over-engineered. The user explicitly prefers staged, practical development and easy debugging over a huge first release.
-
-Important UX principle:
-
-> The user should be able to understand what NEXUS is doing without seeing unnecessary technical complexity.
-
-Useful visible execution states later:
-
-```text
-Understanding prompt…
-Building task plan…
-Selecting workers…
-Waiting for research…
-Passing research to presentation worker…
-Quality checking…
-Reworking…
-Fallback triggered…
-Completed…
-```
-
-## 15. Development protocol
-
-For every future stage:
-
+## Development protocol
+For every stage:
 1. Read this file.
-2. Inspect the current repository before changing architecture.
-3. Make one coherent stage of changes.
-4. Commit changes to GitHub.
-5. Tell the user exactly what to pull/run.
-6. Run/test locally with the user.
-7. Inspect screenshots/errors.
-8. Fix failures before advancing.
-9. Update this context file with the new stage/status.
-10. Only then start the next stage.
+2. Inspect current repo.
+3. Make one coherent stage.
+4. Commit to GitHub.
+5. Tell user exactly what to pull/run.
+6. Test locally.
+7. Inspect errors/screenshots.
+8. Fix before advancing.
+9. Update this file with status.
+10. Only then begin next stage.
 
-Do not stack multiple untested stages.
+## Handoff
+If a new chat starts, read `NEXUS_PROJECT_CONTEXT.md` first and continue from **Current stage: Stage 5 — Gemini connector built, pending local test**. Do not restart the architecture discussion.
 
-## 16. Immediate next action
-
-**Before Stage 5 implementation:** verify the current repository state and decide the safest real free Gemini connection method available to the user's environment. Do not assume an API is free merely because a consumer Gemini account is free. Verify the actual connector/access mechanism before asking the user to configure credentials.
-
-## 17. Handoff instruction for a new chat
-
-If a new conversation starts, the assistant should read `NEXUS_PROJECT_CONTEXT.md` first and continue from the **Current project status** section rather than restarting the architecture discussion.
-
-The user prefers:
-- step-by-step instructions
-- one build stage at a time
-- test after every stage
-- no large untested batch of changes
-- zero-cost/free AI wherever possible
-- clear external actions when the user must do something locally
-- direct GitHub repository updates when appropriate
-- no fake claims about AI quota or capabilities
+User preferences: step-by-step; one stage at a time; test every stage; no huge untested batches; zero-cost/free AI; clear external actions; direct GitHub updates when appropriate; never fake quota/capability claims.
