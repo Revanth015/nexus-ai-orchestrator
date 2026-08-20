@@ -99,8 +99,9 @@ Files/changes:
 - `backend/app/worker_registry.py` — live Gemini readiness overlay
 
 ### Free-only policy for Stage 5
-- Default model: `gemini-3.1-flash-lite`.
-- This model is in NEXUS's verified-free allowlist for this stage based on the current Google Gemini API pricing documentation checked during development.
+- Default model: `gemini-3.5-flash-lite`.
+- Compatibility model: `gemini-3.1-flash-lite` remains in the verified-free allowlist.
+- Google’s current pricing documentation lists Gemini 3.5 Flash-Lite as free of charge on the Free Tier; NEXUS uses it as the default free-only text connector.
 - Connector rejects a model outside the verified-free allowlist.
 - No paid model is automatically selected.
 - Connector never calls Gemini automatically at backend startup; the test is explicit.
@@ -136,6 +137,7 @@ The POST test makes one real model call only when explicitly invoked.
 After pulling:
 ```cmd
 cd D:\Projects\nexus-ai-orchestrator
+git pull origin main
 cd backend
 .venv\Scripts\activate.bat
 pip install -r requirements.txt
