@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from .gemini_connector import runtime_metadata
+from .gemini_connector import runtime_metadata as gemini_runtime_metadata
 from .models import CapabilityScores, FreeStatus, ResourceState, WorkerProfile, WorkerType
 
 
 # Capability values are initial routing priors, not claims about live quotas.
-# They will be replaced/adjusted by measured job telemetry once connectors exist.
+# They are adjusted by connector telemetry when a provider is actually tested.
 _INITIAL_WORKERS = [
     WorkerProfile(
         worker_id="local-tools",
@@ -46,7 +46,7 @@ _INITIAL_WORKERS = [
             data_analysis=88, vision=90, instruction_following=90, reliability=86, efficiency=90,
         ),
         resource=ResourceState(free_status=FreeStatus.UNKNOWN, confidence=0),
-        metadata={"connected": False, "execution_ready": False, "notes": "General multimodal worker; free availability must be measured, not assumed."},
+        metadata={"connected": False, "execution_ready": False, "notes": "General multimodal worker; free availability is measured through its connector."},
     ),
     WorkerProfile(
         worker_id="claude",
@@ -75,26 +75,34 @@ _INITIAL_WORKERS = [
 ]
 
 
-def _apply_live_telemetry(worker: WorkerProfile) -> WorkerProfile:
-    if worker.worker_id != "gemini":
-        return worker
-
-    live = runtime_metadata()
-    worker.metadata.update(live)
-    worker.resource.quota_known = bool(live.get("quota_known", False))
-    worker.resource.estimated_remaining = live.get("estimated_remaining")
-    worker.resource.observed_requests = int(live.get("observed_requests", 0))
-    worker.resource.last_error = live.get("last_error")
-    if live.get("execution_ready"):
+def _apply_gemini_telemetry(worker: WorkerProfile) -> WorkerProfile:
+    telemetry = gemini_runtime_metadata()
+    worker.metadata.update({
+        "connected": telemetry["connected"],
+        "execution_ready": telemetry["execution_ready"],
+        "connector_configured": telemetry["configured"],
+    })
+    worker.resource.quota_known = bool(telemetry["quota_known"])
+    worker.resource.estimated_remaining = telemetry["estimated_remaining"]
+    worker.resource.last_error = telemetry["last_error"]
+    worker.resource.observed_requests = telemetry["observed_requests"]
+    if telemetry["execution_ready"]:
         worker.resource.free_status = FreeStatus.MEASURED_FREE
-    elif live.get("quota_status") in {"exhausted_or_limited"}:
-        worker.resource.free_status = FreeStatus.EXHAUSTED
+        worker.resource.confidence = 100
+    elif telemetry["configured"]:
+        worker.resource.free_status = FreeStatus.UNKNOWN
+    else:
+        worker.resource.free_status = FreeStatus.UNKNOWN
     return worker
 
 
 def list_workers() -> list[WorkerProfile]:
-    """Return fresh copies and overlay live connector telemetry where available."""
-    return [_apply_live_telemetry(worker.model_copy(deep=True)) for worker in _INITIAL_WORKERS]
+    """Return request-time worker profiles with safe live connector telemetry."""
+    workers = [worker.model_copy(deep=True) for worker in _INITIAL_WORKERS]
+    for worker in workers:
+        if worker.worker_id == "gemini":
+            _apply_gemini_telemetry(worker)
+    return workers
 
 
 def get_worker(worker_id: str) -> WorkerProfile | None:
