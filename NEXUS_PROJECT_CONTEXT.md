@@ -92,7 +92,7 @@ Unconnected workers are not presented as executable. Scores are capped at 100. P
 The first real connector is Gemini through Google's official `google-genai` Python SDK.
 
 Files/changes:
-- `backend/app/gemini_connector.py` — connector + telemetry + failure classification
+- `backend/app/gemini_connector.py` — connector + telemetry + failure classification + explicit `.env` loading
 - `backend/.env.example` — local secret template
 - `backend/requirements.txt` — `google-genai` dependency
 - `backend/app/main.py` — Gemini status/test endpoints
@@ -126,6 +126,11 @@ Failure classes include:
 
 Exact remaining quota is never fabricated. Current exact quota is unknown unless a provider exposes it.
 
+### Stage 5 environment-loading issue found
+The user's terminal log showed that `backend\.env` was typed as a command rather than opened/created, and the connector was using `os.getenv()` directly. The connector has now been fixed to explicitly call `load_dotenv()` so `backend\.env` is loaded when the connector module starts. The `.env` file itself must remain local and must never be committed.
+
+The user's status output before this fix showed `configured:false` and the old `gemini-3.1-flash-lite` model even after pulling Stage 5. After pulling the new fix and restarting Uvicorn, the status should be rechecked.
+
 ### Stage 5 endpoints
 ```text
 GET  http://127.0.0.1:8000/connectors/gemini/status
@@ -141,7 +146,11 @@ git pull origin main
 cd backend
 .venv\Scripts\activate.bat
 pip install -r requirements.txt
+```
+If `.env` does not exist:
+```cmd
 copy .env.example .env
+notepad .env
 ```
 Edit `backend\.env` and set:
 ```text
@@ -179,6 +188,7 @@ Gemini connector controls are not yet exposed in the UI; Stage 5 backend validat
 - npm PowerShell issue: use `npm.cmd`.
 - Temporary npm TLS certificate issue was resolved by changing Wi-Fi; do not permanently disable SSL verification.
 - Stage 4 frontend break fixed by importing `createRoot` from `react-dom/client`.
+- Stage 5 Gemini `.env` loading fixed by explicitly loading dotenv in `gemini_connector.py`.
 
 ## Next stages after Gemini validation
 1. Add real fallback execution and quota/rate-limit routing.
