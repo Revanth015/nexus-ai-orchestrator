@@ -18,6 +18,14 @@ _CAPABILITY_FOR_TASK = {
     "general_reasoning": "reasoning",
 }
 
+# Prefer a worker whose execution semantics match the task. Capability score
+# remains the tie-breaker and still determines the best profile worker.
+_SPECIALIZED_EXECUTORS = {
+    "file_analysis": "local-tools",
+    "data_analysis": "local-tools",
+    "quality_review": "local-validator",
+}
+
 
 class WorkerCandidate(BaseModel):
     worker_id: str
@@ -32,14 +40,12 @@ class WorkerCandidate(BaseModel):
 class WorkerRouteResponse(BaseModel):
     task_type: str
     capability: str
-    # best_profile_worker_id answers: "Who would be best if connected?"
     best_profile_worker_id: str | None = None
-    # recommended_worker_id answers: "Who can NEXUS actually use right now?"
     recommended_worker_id: str | None = None
     execution_ready: bool = False
     candidates: list[WorkerCandidate] = Field(default_factory=list)
     fallback_worker_id: str | None = None
-    routing_policy: str = "free_first_execution_aware_v2"
+    routing_policy: str = "free_first_execution_aware_v3"
 
 
 def _capability_score(worker: WorkerProfile, capability: str) -> float:
@@ -78,7 +84,8 @@ def route_task(task_type: str, *, free_only: bool = True) -> WorkerRouteResponse
                 execution_ready=bool(worker.metadata.get("execution_ready", False)),
                 resource_status=worker.resource.free_status.value,
                 reason=(
-                    f"Strong {capability} fit" if _capability_score(worker, capability) >= 90
+                    "Specialized local executor" if _SPECIALIZED_EXECUTORS.get(task_type) == worker.worker_id
+                    else f"Strong {capability} fit" if _capability_score(worker, capability) >= 90
                     else f"Useful {capability} capability"
                 ),
             )
@@ -88,12 +95,19 @@ def route_task(task_type: str, *, free_only: bool = True) -> WorkerRouteResponse
         reverse=True,
     )
 
-    # Keep the ideal profile separate from the executable route. This prevents
-    # an unconnected high-scoring AI from being presented as immediately usable.
     best_profile = candidates[0] if candidates else None
     executable = [candidate for candidate in candidates if candidate.execution_ready]
-    recommended = executable[0] if executable else None
-    fallback = executable[1].worker_id if len(executable) > 1 else None
+
+    specialized_id = _SPECIALIZED_EXECUTORS.get(task_type)
+    specialized = next(
+        (candidate for candidate in executable if candidate.worker_id == specialized_id),
+        None,
+    )
+    recommended = specialized or (executable[0] if executable else None)
+    fallback = next(
+        (candidate.worker_id for candidate in executable if candidate.worker_id != recommended.worker_id),
+        None,
+    ) if recommended else None
 
     return WorkerRouteResponse(
         task_type=task_type,
