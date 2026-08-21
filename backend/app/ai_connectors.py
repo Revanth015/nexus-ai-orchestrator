@@ -19,12 +19,7 @@ def _now() -> str:
 
 
 def _post(url: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, Any]:
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={**headers, "Content-Type": "application/json"},
-        method="POST",
-    )
+    request = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers={**headers, "Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
             raw = response.read().decode("utf-8")
@@ -53,30 +48,23 @@ def _record(worker_id: str, ok: bool, latency: float, error: str | None = None) 
         state["last_error"] = error
 
 
-def _status(worker_id: str, provider: str, model: str, configured: bool) -> dict[str, Any]:
+def _status(worker_id: str, provider: str, model: str, configured: bool, free_verified: bool) -> dict[str, Any]:
     state = _STATE[worker_id]
+    ready = state["successful_requests"] > 0 and state["last_failure_at"] is None and free_verified
     return {
-        "provider": provider,
-        "worker_id": worker_id,
-        "model": model,
-        "configured": configured,
-        "execution_ready": state["successful_requests"] > 0 and state["last_failure_at"] is None,
-        "free_only": True,
-        "free_model_verified": False,
-        "quota_status": "unknown",
-        "quota_exact": None,
-        "quota_estimate": None,
-        **state,
-        "note": "NEXUS does not assume provider APIs are free. A connector becomes execution-ready only after a successful local test; provider terms and limits still apply.",
+        "provider": provider, "worker_id": worker_id, "model": model, "configured": configured,
+        "execution_ready": ready, "free_only": True, "free_model_verified": free_verified,
+        "quota_status": "unknown", "quota_exact": None, "quota_estimate": None, **state,
+        "note": "NEXUS only routes this provider in free-only mode when its free eligibility is explicitly verified. API availability alone is not treated as free.",
     }
 
 
 def claude_status() -> dict[str, Any]:
-    return _status("claude", "anthropic", os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-latest"), bool(os.getenv("ANTHROPIC_API_KEY", "").strip()))
+    return _status("claude", "anthropic", os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-latest"), bool(os.getenv("ANTHROPIC_API_KEY", "").strip()), os.getenv("CLAUDE_FREE_VERIFIED", "false").lower() == "true")
 
 
 def perplexity_status() -> dict[str, Any]:
-    return _status("perplexity", "perplexity", os.getenv("PERPLEXITY_MODEL", "sonar"), bool(os.getenv("PERPLEXITY_API_KEY", "").strip()))
+    return _status("perplexity", "perplexity", os.getenv("PERPLEXITY_MODEL", "sonar"), bool(os.getenv("PERPLEXITY_API_KEY", "").strip()), os.getenv("PERPLEXITY_FREE_VERIFIED", "false").lower() == "true")
 
 
 def generate_claude(prompt: str) -> dict[str, Any]:
@@ -86,11 +74,7 @@ def generate_claude(prompt: str) -> dict[str, Any]:
         raise RuntimeError("Claude connector is not configured. Set ANTHROPIC_API_KEY locally.")
     started = time.perf_counter()
     try:
-        data = _post(
-            "https://api.anthropic.com/v1/messages",
-            {"x-api-key": key, "anthropic-version": "2023-06-01"},
-            {"model": model, "max_tokens": 2048, "messages": [{"role": "user", "content": prompt}]},
-        )
+        data = _post("https://api.anthropic.com/v1/messages", {"x-api-key": key, "anthropic-version": "2023-06-01"}, {"model": model, "max_tokens": 2048, "messages": [{"role": "user", "content": prompt}]})
         text = "".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text").strip()
         if not text:
             raise RuntimeError("Claude returned no text content.")
@@ -110,11 +94,7 @@ def generate_perplexity(prompt: str) -> dict[str, Any]:
         raise RuntimeError("Perplexity connector is not configured. Set PERPLEXITY_API_KEY locally.")
     started = time.perf_counter()
     try:
-        data = _post(
-            "https://api.perplexity.ai/chat/completions",
-            {"Authorization": f"Bearer {key}"},
-            {"model": model, "messages": [{"role": "user", "content": prompt}]},
-        )
+        data = _post("https://api.perplexity.ai/chat/completions", {"Authorization": f"Bearer {key}"}, {"model": model, "messages": [{"role": "user", "content": prompt}]})
         text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
         if not text:
             raise RuntimeError("Perplexity returned no text content.")
