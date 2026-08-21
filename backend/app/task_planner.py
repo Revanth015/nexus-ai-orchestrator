@@ -86,6 +86,19 @@ def build_task_plan(analysis: IntentAnalysis) -> TaskPlan:
             workers=["ai", "local"],
         )
 
+    # A prompt that does not match a specialized capability is still an
+    # executable request. Keep it as an explicit reasoning task rather than
+    # returning an empty plan, so the execution layer can route it normally.
+    if not tasks and "general_reasoning" in analysis.task_types:
+        _add_task(
+            tasks,
+            "reasoning",
+            "Reason through the requested task",
+            "general_reasoning",
+            outputs=["reasoning_output"],
+            workers=["ai"],
+        )
+
     # Quality review is always a terminal gate unless the user explicitly
     # disabled it in Stage 2.
     if analysis.needs_quality_review:
