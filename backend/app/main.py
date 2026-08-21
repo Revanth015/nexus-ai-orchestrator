@@ -1,17 +1,10 @@
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-
 from .config import settings
-from .execution import (
-    ExecutionRequest,
-    ExecutionResponse,
-    MissionExecutionRequest,
-    MissionExecutionResponse,
-    execute_mission,
-    execute_task,
-)
+from .execution import ExecutionRequest, ExecutionResponse, MissionExecutionRequest, MissionExecutionResponse, execute_mission, execute_task
 from .file_store import save_upload
 from .gemini_connector import GeminiStatus, GeminiTestRequest, status as gemini_status, test_connection
+from .ai_connectors import claude_status, perplexity_status, test_claude, test_perplexity
 from .planner_models import PlanResponse
 from .prompt_analyzer import analyze_prompt
 from .prompt_models import PromptAnalysisResponse, PromptRequest
@@ -19,69 +12,39 @@ from .task_planner import build_task_plan
 from .worker_registry import list_workers
 from .worker_router import WorkerRouteResponse, route_task
 
-app = FastAPI(
-    title=settings.app_name,
-    version="0.1.0",
-    description="Free-first AI orchestration backend for NEXUS.",
-)
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+app = FastAPI(title=settings.app_name, version="0.1.0", description="Free-first AI orchestration backend for NEXUS.")
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/health")
 def health() -> dict[str, object]:
-    return {
-        "status": "ok",
-        "service": settings.app_name,
-        "free_only": settings.free_only,
-        "background_execution": settings.background_execution,
-    }
-
+    return {"status": "ok", "service": settings.app_name, "free_only": settings.free_only, "background_execution": settings.background_execution}
 
 @app.post("/analyze", response_model=PromptAnalysisResponse)
 def analyze(request: PromptRequest) -> PromptAnalysisResponse:
     return PromptAnalysisResponse(prompt=request.prompt, analysis=analyze_prompt(request.prompt))
-
 
 @app.post("/plan", response_model=PlanResponse)
 def plan(request: PromptRequest) -> PlanResponse:
     analysis = analyze_prompt(request.prompt)
     return PlanResponse(plan=build_task_plan(analysis))
 
-
 @app.post("/files/upload")
 async def upload_file(file: UploadFile = File(...)) -> dict[str, object]:
-    """Store one supported local-analysis file without sending it to an external AI provider."""
     try:
         content = await file.read()
-        metadata = save_upload(file.filename or "uploaded_file", content)
-        return {"status": "uploaded", "file": metadata}
+        return {"status": "uploaded", "file": save_upload(file.filename or "uploaded_file", content)}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"File upload failed: {exc}") from exc
 
-
 @app.get("/workers")
 def workers() -> dict[str, object]:
-    return {
-        "free_only": settings.free_only,
-        "workers": [worker.model_dump(mode="json") for worker in list_workers()],
-        "note": "Capability scores are initial routing priors; connector telemetry updates readiness and observed resource state.",
-    }
-
+    return {"free_only": settings.free_only, "workers": [worker.model_dump(mode="json") for worker in list_workers()], "note": "Capability scores are routing priors; live connector telemetry determines execution readiness."}
 
 @app.get("/route/{task_type}", response_model=WorkerRouteResponse)
 def route(task_type: str) -> WorkerRouteResponse:
     return route_task(task_type, free_only=settings.free_only)
-
 
 @app.post("/execute", response_model=ExecutionResponse)
 def execute(request: ExecutionRequest) -> ExecutionResponse:
@@ -92,7 +55,6 @@ def execute(request: ExecutionRequest) -> ExecutionResponse:
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-
 @app.post("/execute-mission", response_model=MissionExecutionResponse)
 def execute_mission_endpoint(request: MissionExecutionRequest) -> MissionExecutionResponse:
     try:
@@ -102,15 +64,35 @@ def execute_mission_endpoint(request: MissionExecutionRequest) -> MissionExecuti
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-
 @app.get("/connectors/gemini/status", response_model=GeminiStatus)
 def gemini_connector_status() -> GeminiStatus:
     return gemini_status()
-
 
 @app.post("/connectors/gemini/test")
 def gemini_connector_test(request: GeminiTestRequest) -> dict[str, object]:
     try:
         return {"status": "ok", "result": test_connection(request.prompt)}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+@app.get("/connectors/claude/status")
+def claude_connector_status() -> dict[str, object]:
+    return claude_status()
+
+@app.post("/connectors/claude/test")
+def claude_connector_test(request: GeminiTestRequest) -> dict[str, object]:
+    try:
+        return {"status": "ok", "result": test_claude(request.prompt)}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+@app.get("/connectors/perplexity/status")
+def perplexity_connector_status() -> dict[str, object]:
+    return perplexity_status()
+
+@app.post("/connectors/perplexity/test")
+def perplexity_connector_test(request: GeminiTestRequest) -> dict[str, object]:
+    try:
+        return {"status": "ok", "result": test_perplexity(request.prompt)}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
