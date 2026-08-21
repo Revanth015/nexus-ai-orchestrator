@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
 import { Activity, ArrowUp, BrainCircuit, CirclePause, Paperclip, Settings2, Sparkles } from "lucide-react";
 import "./styles.css";
 
@@ -77,10 +78,13 @@ function App() {
 
       const routeResults = await Promise.all(
         planResult.plan.tasks.map(async (task) => {
-          const response = await fetch(`${API_BASE}/route/${encodeURIComponent(task.task_type)}`);
-          if (!response.ok) throw new Error(`Worker routing failed (${response.status})`);
-          const result = await response.json();
-          return { task, route: result };
+          try {
+            const response = await fetch(`${API_BASE}/route/${encodeURIComponent(task.task_type)}`);
+            if (!response.ok) return { task, route: null, error: `Worker routing failed (${response.status})` };
+            return { task, route: await response.json() };
+          } catch (routeError) {
+            return { task, route: null, error: routeError.message || "Worker routing unavailable" };
+          }
         })
       );
       setWorkerRoutes(routeResults);
@@ -267,15 +271,20 @@ function App() {
                 <span className="plan-badge">Free-first</span>
               </div>
               <div className="worker-list">
-                {workerRoutes.map(({ task, route }) => {
+                {workerRoutes.map(({ task, route, error: routeError }) => {
+                  if (!route) {
+                    return (
+                      <div className="worker-row" key={task.task_id}>
+                        <div className="worker-task">{task.title}<small>{task.task_type} capability</small></div>
+                        <div className="worker-choice"><strong>Routing unavailable</strong><small>{routeError}</small></div>
+                      </div>
+                    );
+                  }
                   const bestProfile = route.best_profile_worker_id;
                   const recommended = route.recommended_worker_id;
                   return (
                     <div className="worker-row" key={task.task_id}>
-                      <div className="worker-task">
-                        {task.title}
-                        <small>{route.capability} capability</small>
-                      </div>
+                      <div className="worker-task">{task.title}<small>{route.capability} capability</small></div>
                       <div className="worker-choice">
                         <strong>{recommended ?? "No executable worker"}</strong>
                         <small>{recommended ? "current execution" : "current execution unavailable"}</small>
@@ -283,10 +292,7 @@ function App() {
                       </div>
                       <div className="worker-candidates">
                         {route.candidates.slice(0, 3).map((candidate) => (
-                          <span className="worker-chip" key={candidate.worker_id}>
-                            {candidate.name} · {Math.round(candidate.score)}
-                            {candidate.execution_ready ? " · ready" : " · not connected"}
-                          </span>
+                          <span className="worker-chip" key={candidate.worker_id}>{candidate.name} · {Math.round(candidate.score)}{candidate.execution_ready ? " · ready" : " · not connected"}</span>
                         ))}
                       </div>
                     </div>
