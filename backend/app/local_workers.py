@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+import statistics
 import time
+from collections import Counter
 from datetime import datetime, timezone
 
 
@@ -44,6 +46,156 @@ def _file_summary(file_context: list[dict[str, object]]) -> str:
     return "\n\n".join(lines)
 
 
+def _split_rows(content: str) -> list[tuple[str | None, list[str]]]:
+    """Parse the normalized file-store representation into sheet/row pairs."""
+    rows: list[tuple[str | None, list[str]]] = []
+    current_sheet: str | None = None
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("[truncated"):
+            continue
+        sheet_match = re.fullmatch(r"\[SHEET:\s*(.*?)\]", line)
+        if sheet_match:
+            current_sheet = sheet_match.group(1).strip() or "Sheet"
+            continue
+        if line.startswith("[PAGE "):
+            current_sheet = line.strip("[]")
+            continue
+        rows.append((current_sheet, [part.strip() for part in raw.split(" | ")]))
+    return rows
+
+
+def _is_number(value: str) -> bool:
+    cleaned = value.strip().replace(",", "")
+    if not cleaned:
+        return False
+    return bool(re.fullmatch(r"[-+]?\d+(?:\.\d+)?", cleaned))
+
+
+def _numeric(value: str) -> float:
+    return float(value.strip().replace(",", ""))
+
+
+def _tabular_analysis(item: dict[str, object]) -> str:
+    """Produce deterministic column-level analysis from CSV/XLSX extracted rows."""
+    content = str(item.get("content", ""))
+    extension = str(item.get("extension", "")).lower()
+    filename = str(item.get("filename", "uploaded file"))
+    parsed = _split_rows(content)
+    if not parsed:
+        return f"File: {filename}\nNo tabular rows were extracted."
+
+    grouped: dict[str, list[list[str]]] = {}
+    order: list[str] = []
+    for sheet, row in parsed:
+        name = sheet or ("CSV" if extension == ".csv" else "Sheet")
+        if name not in grouped:
+            grouped[name] = []
+            order.append(name)
+        grouped[name].append(row)
+
+    report: list[str] = [f"File: {filename}", f"Type: {extension or 'unknown'}"]
+    total_rows = 0
+    total_columns = 0
+
+    for sheet_name in order:
+        raw_rows = grouped[sheet_name]
+        if not raw_rows:
+            continue
+        header = raw_rows[0]
+        # Ignore completely blank headers while retaining column positions.
+        columns = [value if value else f"Column {i + 1}" for i, value in enumerate(header)]
+        data = [row + [""] * max(0, len(columns) - len(row)) for row in raw_rows[1:]]
+        data = [row[:len(columns)] for row in data]
+        total_rows += len(data)
+        total_columns = max(total_columns, len(columns))
+        report.append(f"\n[{sheet_name}] rows={len(data)}, columns={len(columns)}")
+        report.append("Columns: " + ", ".join(columns))
+
+        duplicate_count = len(data) - len({tuple(row) for row in data})
+        if duplicate_count > 0:
+            report.append(f"Duplicate rows: {duplicate_count}")
+
+        numeric_columns = 0
+        missing_cells = 0
+        for index, column in enumerate(columns):
+            values = [row[index].strip() for row in data]
+            non_empty = [value for value in values if value]
+            missing = len(values) - len(non_empty)
+            missing_cells += missing
+            numeric_values = [_numeric(value) for value in non_empty if _is_number(value)]
+            numeric_ratio = (len(numeric_values) / len(non_empty)) if non_empty else 0
+
+            if numeric_values and numeric_ratio >= 0.8:
+                numeric_columns += 1
+                average = statistics.mean(numeric_values)
+                minimum = min(numeric_values)
+                maximum = max(numeric_values)
+                report.append(
+                    f"- {column}: numeric; non-empty={len(non_empty)}/{len(values)}; "
+                    f"avg={average:.2f}; min={minimum:.2f}; max={maximum:.2f}"
+                )
+            else:
+                distinct = len(set(non_empty))
+                detail = f"categorical/text; non-empty={len(non_empty)}/{len(values)}; unique={distinct}"
+                if non_empty and distinct <= 10:
+                    common = Counter(non_empty).most_common(3)
+                    detail += "; top=" + ", ".join(f"{value} ({count})" for value, count in common)
+                report.append(f"- {column}: {detail}")
+
+        report.append(f"Missing cells: {missing_cells}; numeric columns: {numeric_columns}")
+
+    report.extend([
+        "",
+        "Dataset overview:",
+        f"- Sheets/tables: {len(order)}",
+        f"- Data rows: {total_rows}",
+        f"- Maximum columns in a table: {total_columns}",
+        "- Analysis method: deterministic column profiling; no semantic business conclusions are invented.",
+    ])
+    return "\n".join(report)
+
+
+def _data_analysis_output(prompt: str, files: list[dict[str, object]]) -> str:
+    if not files:
+        numbers = [float(value) for value in re.findall(r"(?<![A-Za-z])[-+]?\d+(?:\.\d+)?", prompt)]
+        if not numbers:
+            return (
+                "Deterministic local analysis completed.\n"
+                "No uploaded dataset was supplied and no numeric dataset was detected in the prompt.\n"
+                "Provide a CSV/XLSX file for column-level profiling."
+            )
+        average = sum(numbers) / len(numbers)
+        return (
+            "Deterministic local analysis completed.\n"
+            f"Numeric values detected: {len(numbers)}\n"
+            f"Average: {average:.2f}\n"
+            f"Minimum: {min(numbers):.2f}\n"
+            f"Maximum: {max(numbers):.2f}"
+        )
+
+    sections: list[str] = [
+        "Deterministic local dataset analysis completed.",
+        f"Files analyzed: {len(files)}",
+        "",
+    ]
+    for item in files:
+        extension = str(item.get("extension", "")).lower()
+        if extension in {".csv", ".xlsx", ".xlsm"}:
+            sections.append(_tabular_analysis(item))
+        else:
+            content = str(item.get("content", ""))
+            sections.append(
+                f"File: {item.get('filename', 'file')}\n"
+                f"Type: {extension or 'unknown'}\n"
+                f"Extracted characters: {len(content)}\n"
+                "This file type is available as extracted text; use file_analysis for detailed document inspection."
+            )
+        sections.append("\n" + "-" * 40 + "\n")
+    sections.append("No external AI was used; all reported statistics are calculated from the supplied file contents.")
+    return "\n".join(sections)
+
+
 def execute_local_task(
     task_type: str,
     prompt: str,
@@ -68,30 +220,7 @@ def execute_local_task(
         worker_name = "NEXUS Local Validator"
 
     elif task_type == "data_analysis":
-        text = prompt.strip()
-        file_text = _file_summary(files)
-        combined = f"{text}\n\n{file_text}"
-        numbers = [float(value) for value in re.findall(r"(?<![A-Za-z])[-+]?\d+(?:\.\d+)?", combined)]
-        words = re.findall(r"\b\w+\b", combined)
-        unique_words = len({word.lower() for word in words})
-        numeric_summary = "No numeric values detected."
-        if numbers:
-            average = sum(numbers) / len(numbers)
-            numeric_summary = f"Numeric values: {len(numbers)}\nNumeric average: {average:.2f}\nNumeric maximum: {max(numbers):.2f}"
-        output = (
-            "Deterministic local analysis completed.\n"
-            f"Uploaded files: {len(files)}\n"
-            f"Input characters: {len(combined)}\n"
-            f"Word count: {len(words)}\n"
-            f"Unique words: {unique_words}\n"
-            f"{numeric_summary}\n"
-            "Note: calculations are deterministic; semantic business conclusions are not invented."
-        )
-        if files:
-            output += "\n\nFile summaries:\n" + "\n\n".join(
-                f"{item.get('filename', 'file')}: {item.get('extension', '')}, {len(str(item.get('content', '')))} extracted characters"
-                for item in files
-            )
+        output = _data_analysis_output(prompt.strip(), files)
         worker_id = "local-tools"
         worker_name = "NEXUS Local Tools"
 
@@ -106,13 +235,13 @@ def execute_local_task(
         else:
             output = (
                 "Local file analysis completed.\n"
-                f"Files inspected: {len(files)}\n"
-                + "\n".join(
-                    f"- {item.get('filename', 'file')}: {item.get('extension', '')}, {len(str(item.get('content', '')))} extracted characters"
+                f"Files inspected: {len(files)}\n\n"
+                + "\n\n".join(
+                    _tabular_analysis(item)
+                    if str(item.get("extension", "")).lower() in {".csv", ".xlsx", ".xlsm"}
+                    else f"{item.get('filename', 'file')}: {len(str(item.get('content', '')))} extracted characters"
                     for item in files
                 )
-                + "\n\nExtracted preview:\n"
-                + _file_summary(files)
             )
         worker_id = "local-tools"
         worker_name = "NEXUS Local Tools"
