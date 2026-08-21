@@ -28,6 +28,7 @@ build/
 *.sqlite3
 runtime/
 data/local/
+backend/data/uploads/
 artifacts/local/
 logs/
 
