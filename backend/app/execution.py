@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from .gemini_connector import generate_text
+from .local_workers import execute_local_task
 from .prompt_analyzer import analyze_prompt
 from .task_planner import build_task_plan
 from .worker_router import route_task
@@ -64,7 +65,7 @@ class MissionExecutionResponse(BaseModel):
 def execute_task(request: ExecutionRequest, *, free_only: bool = True) -> ExecutionResponse:
     route = route_task(request.task_type, free_only=free_only)
 
-    if not route.execution_ready:
+    if not route.execution_ready or not route.recommended_worker_id:
         raise RuntimeError(
             f"No execution-ready free worker is available for task type '{request.task_type}'."
         )
@@ -72,16 +73,23 @@ def execute_task(request: ExecutionRequest, *, free_only: bool = True) -> Execut
     executable_candidate = next(
         (
             item for item in route.candidates
-            if item.worker_id == "gemini" and item.execution_ready
+            if item.worker_id == route.recommended_worker_id and item.execution_ready
         ),
         None,
     )
     if executable_candidate is None:
         raise RuntimeError(
-            f"Worker routing is ready for '{request.task_type}', but no generic connector executor is currently available."
+            f"Worker routing selected '{route.recommended_worker_id}', but that worker is not execution-ready."
         )
 
-    result = generate_text(request.prompt)
+    if executable_candidate.worker_id == "gemini":
+        result = generate_text(request.prompt)
+    elif executable_candidate.worker_id in {"local-tools", "local-validator"}:
+        result = execute_local_task(request.task_type, request.prompt)
+    else:
+        raise RuntimeError(
+            f"Worker '{executable_candidate.worker_id}' is routed but has no registered executor."
+        )
 
     return ExecutionResponse(
         status="completed",
