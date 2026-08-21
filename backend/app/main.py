@@ -2,7 +2,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .execution import ExecutionRequest, ExecutionResponse, execute_task
+from .execution import (
+    ExecutionRequest,
+    ExecutionResponse,
+    MissionExecutionRequest,
+    MissionExecutionResponse,
+    execute_mission,
+    execute_task,
+)
 from .gemini_connector import GeminiStatus, GeminiTestRequest, status as gemini_status, test_connection
 from .prompt_analyzer import analyze_prompt
 from .prompt_models import PromptAnalysisResponse, PromptRequest
@@ -75,6 +82,15 @@ def execute(request: ExecutionRequest) -> ExecutionResponse:
     """Route one explicit task to an execution-ready free worker and run it."""
     try:
         return execute_task(request, free_only=settings.free_only)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/execute-mission", response_model=MissionExecutionResponse)
+def execute_mission_endpoint(request: MissionExecutionRequest) -> MissionExecutionResponse:
+    """Execute every planned task in dependency order, carrying artifacts downstream."""
+    try:
+        return execute_mission(request, free_only=settings.free_only)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
