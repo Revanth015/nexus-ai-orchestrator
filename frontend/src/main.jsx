@@ -12,7 +12,7 @@ function App() {
   const [plan, setPlan] = useState(null);
   const [workerRoutes, setWorkerRoutes] = useState([]);
   const [workers, setWorkers] = useState([]);
-  const [execution, setExecution] = useState(null);
+  const [missionExecution, setMissionExecution] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState("");
 
@@ -49,7 +49,7 @@ function App() {
     setAnalysis(null);
     setPlan(null);
     setWorkerRoutes([]);
-    setExecution(null);
+    setMissionExecution(null);
     setError("");
 
     try {
@@ -86,24 +86,19 @@ function App() {
       );
       setWorkerRoutes(routeResults);
 
-      // Stage 6B intentionally executes only the first planned task. This proves
-      // the Missions UI can reach the execution layer without pretending that a
-      // multi-step mission is already fully orchestrated.
-      const firstTask = planResult.plan.tasks[0];
-      if (firstTask) {
-        const executionResponse = await fetch(`${API_BASE}/execute`, {
+      // Stage 6C executes the complete planned DAG. Each completed task
+      // produces artifacts that are supplied to dependent downstream tasks.
+      if (planResult.plan.tasks.length > 0) {
+        const executionResponse = await fetch(`${API_BASE}/execute-mission`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            task_type: firstTask.task_type,
-            prompt: value,
-          }),
+          body: JSON.stringify({ prompt: value }),
         });
         if (!executionResponse.ok) {
           const detail = await executionResponse.text();
-          throw new Error(`Execution request failed (${executionResponse.status}): ${detail}`);
+          throw new Error(`Mission execution failed (${executionResponse.status}): ${detail}`);
         }
-        setExecution(await executionResponse.json());
+        setMissionExecution(await executionResponse.json());
       }
 
       await refreshWorkers();
@@ -170,27 +165,37 @@ function App() {
             <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Tell NEXUS what you want to accomplish..." rows={4} />
             <div className="composer-footer">
               <button type="button" className="icon-button" aria-label="Attach file"><Paperclip size={18} /></button>
-              <span className="hint">{analyzing ? "Understanding, planning, mapping and executing..." : "Stage 6 · Routed task execution"}</span>
+              <span className="hint">{analyzing ? "Understanding, planning, mapping and executing all tasks..." : "Stage 6 · Multi-task orchestration"}</span>
               <button type="submit" className="send-button" disabled={!prompt.trim() || analyzing}><ArrowUp size={18} /></button>
             </div>
           </form>
 
           {error && <div className="error-card">{error}</div>}
 
-          {execution && (
+          {missionExecution && (
             <section className="analysis-card execution-result-card">
               <div className="analysis-header">
-                <div><span className="eyebrow">NEXUS EXECUTION</span><h2>Task completed</h2></div>
-                <span className="confidence">{execution.worker_name} · {execution.route_score}</span>
+                <div><span className="eyebrow">NEXUS EXECUTION</span><h2>{missionExecution.status === "completed" ? "Mission completed" : "Mission stopped"}</h2></div>
+                <span className="confidence">{missionExecution.tasks.filter((task) => task.status === "completed").length}/{missionExecution.tasks.length} completed</span>
               </div>
-              <div className="analysis-grid">
-                <div><label>Worker</label><strong>{execution.worker_name}</strong></div>
-                <div><label>Task type</label><strong>{execution.task_type}</strong></div>
-                <div><label>Routing policy</label><strong>{execution.routing_policy}</strong></div>
-                <div><label>Execution</label><strong>Completed</strong></div>
+              <div className="task-list">
+                {missionExecution.tasks.map((task, index) => (
+                  <div className="task-row" key={task.task_id}>
+                    <div className="task-number">{index + 1}</div>
+                    <div className="task-main">
+                      <div className="task-title">{task.title}</div>
+                      <div className="task-meta">{task.task_type} · {task.status}</div>
+                      {task.worker_name && <div className="task-deps">Worker: {task.worker_name} · score {task.route_score}</div>}
+                      {task.error && <div className="task-deps">Error: {task.error}</div>}
+                    </div>
+                    <div className="task-output">{task.status === "completed" ? "✓ completed" : "! stopped"}</div>
+                  </div>
+                ))}
               </div>
-              <div className="execution-output">{execution.output}</div>
-              <small className="analyzer-note">Execution telemetry · successful requests: {execution.telemetry?.successful_requests ?? "unknown"} · latency: {execution.telemetry?.last_latency_ms ?? "unknown"} ms</small>
+              {missionExecution.tasks.map((task) => task.output ? (
+                <div className="execution-output" key={`${task.task_id}-output`}><strong>{task.title}</strong><br />{task.output}</div>
+              ) : null)}
+              <small className="analyzer-note">Dependency-aware execution · downstream tasks receive completed upstream artifacts.</small>
             </section>
           )}
 
