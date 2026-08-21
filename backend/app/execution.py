@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from .file_store import read_file
 from .gemini_connector import generate_text
 from .local_workers import execute_local_task
 from .prompt_analyzer import analyze_prompt
@@ -12,10 +13,12 @@ from .worker_router import route_task
 class ExecutionRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=20000)
     task_type: str = Field(default="general_reasoning", min_length=1, max_length=64)
+    file_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
 class MissionExecutionRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=20000)
+    file_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
 class ExecutionResponse(BaseModel):
@@ -62,6 +65,27 @@ class MissionExecutionResponse(BaseModel):
     artifacts: list[ArtifactRecord]
 
 
+def _load_files(file_ids: list[str]) -> list[dict[str, object]]:
+    if not file_ids:
+        return []
+    if len(file_ids) > 10:
+        raise ValueError("A maximum of 10 files can be supplied to one execution.")
+    return [read_file(file_id) for file_id in file_ids]
+
+
+def _file_context_text(files: list[dict[str, object]]) -> str:
+    if not files:
+        return ""
+    sections = []
+    for item in files:
+        sections.append(
+            f"FILE: {item.get('filename', item.get('file_id', 'unknown'))}\n"
+            f"TYPE: {item.get('extension', '')}\n"
+            f"EXTRACTED CONTENT:\n{str(item.get('content', ''))[:12000]}"
+        )
+    return "\n\n".join(sections)
+
+
 def execute_task(request: ExecutionRequest, *, free_only: bool = True) -> ExecutionResponse:
     route = route_task(request.task_type, free_only=free_only)
 
@@ -71,10 +95,7 @@ def execute_task(request: ExecutionRequest, *, free_only: bool = True) -> Execut
         )
 
     executable_candidate = next(
-        (
-            item for item in route.candidates
-            if item.worker_id == route.recommended_worker_id and item.execution_ready
-        ),
+        (item for item in route.candidates if item.worker_id == route.recommended_worker_id and item.execution_ready),
         None,
     )
     if executable_candidate is None:
@@ -82,14 +103,17 @@ def execute_task(request: ExecutionRequest, *, free_only: bool = True) -> Execut
             f"Worker routing selected '{route.recommended_worker_id}', but that worker is not execution-ready."
         )
 
+    files = _load_files(request.file_ids)
+    prompt = request.prompt
+    if files:
+        prompt += "\n\nUploaded file context:\n" + _file_context_text(files)
+
     if executable_candidate.worker_id == "gemini":
-        result = generate_text(request.prompt)
+        result = generate_text(prompt)
     elif executable_candidate.worker_id in {"local-tools", "local-validator"}:
-        result = execute_local_task(request.task_type, request.prompt)
+        result = execute_local_task(request.task_type, prompt, file_context=files)
     else:
-        raise RuntimeError(
-            f"Worker '{executable_candidate.worker_id}' is routed but has no registered executor."
-        )
+        raise RuntimeError(f"Worker '{executable_candidate.worker_id}' is routed but has no registered executor.")
 
     return ExecutionResponse(
         status="completed",
@@ -160,8 +184,7 @@ def execute_mission(request: MissionExecutionRequest, *, free_only: bool = True)
     for task_id in plan.execution_order:
         task = task_by_id[task_id]
         missing = [
-            dependency
-            for dependency in task.dependencies
+            dependency for dependency in task.dependencies
             if not any(record.task_id == dependency and record.status == "completed" for record in records)
         ]
         if missing:
@@ -178,13 +201,8 @@ def execute_mission(request: MissionExecutionRequest, *, free_only: bool = True)
             execution = execute_task(
                 ExecutionRequest(
                     task_type=task.task_type,
-                    prompt=_task_prompt(
-                        plan.objective,
-                        task.title,
-                        task.task_type,
-                        task.inputs,
-                        artifacts_by_name,
-                    ),
+                    prompt=_task_prompt(plan.objective, task.title, task.task_type, task.inputs, artifacts_by_name),
+                    file_ids=request.file_ids,
                 ),
                 free_only=free_only,
             )
