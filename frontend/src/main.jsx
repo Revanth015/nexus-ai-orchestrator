@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from "react";
-import { createRoot } from "react-dom/client";
 import { Activity, ArrowUp, BrainCircuit, CirclePause, Paperclip, Settings2, Sparkles } from "lucide-react";
 import "./styles.css";
 
@@ -86,8 +85,6 @@ function App() {
       );
       setWorkerRoutes(routeResults);
 
-      // Stage 6C executes the complete planned DAG. Each completed task
-      // produces artifacts that are supplied to dependent downstream tasks.
       if (planResult.plan.tasks.length > 0) {
         const executionResponse = await fetch(`${API_BASE}/execute-mission`, {
           method: "POST",
@@ -175,7 +172,7 @@ function App() {
           {missionExecution && (
             <section className="analysis-card execution-result-card">
               <div className="analysis-header">
-                <div><span className="eyebrow">NEXUS EXECUTION</span><h2>{missionExecution.status === "completed" ? "Mission completed" : "Mission stopped"}</h2></div>
+                <div><span className="eyebrow">NEXUS EXECUTION</span><h2>{missionExecution.status === "completed" ? "Mission completed" : missionExecution.status === "rework_required" ? "Quality gate requires rework" : "Mission stopped"}</h2></div>
                 <span className="confidence">{missionExecution.tasks.filter((task) => task.status === "completed").length}/{missionExecution.tasks.length} completed</span>
               </div>
               <div className="task-list">
@@ -186,16 +183,27 @@ function App() {
                       <div className="task-title">{task.title}</div>
                       <div className="task-meta">{task.task_type} · {task.status}</div>
                       {task.worker_name && <div className="task-deps">Worker: {task.worker_name} · score {task.route_score}</div>}
+                      {task.quality_decision && <div className="task-deps">Quality gate: {task.quality_decision}</div>}
                       {task.error && <div className="task-deps">Error: {task.error}</div>}
                     </div>
-                    <div className="task-output">{task.status === "completed" ? "✓ completed" : "! stopped"}</div>
+                    <div className="task-output">{task.status === "completed" ? "✓ completed" : task.status === "rework_required" ? "↻ rework" : "! stopped"}</div>
                   </div>
                 ))}
               </div>
-              {missionExecution.tasks.map((task) => task.output ? (
-                <div className="execution-output" key={`${task.task_id}-output`}><strong>{task.title}</strong><br />{task.output}</div>
-              ) : null)}
-              <small className="analyzer-note">Dependency-aware execution · downstream tasks receive completed upstream artifacts.</small>
+
+              <div className="artifact-list">
+                <div className="artifact-heading">Artifacts · {missionExecution.artifacts?.length ?? 0}</div>
+                {(missionExecution.artifacts ?? []).map((artifact) => (
+                  <details className="artifact-card" key={artifact.artifact_id}>
+                    <summary>
+                      <span><strong>{artifact.name}</strong><small>{artifact.artifact_type} · {artifact.size_chars} characters</small></span>
+                      <span>View output</span>
+                    </summary>
+                    <div className="artifact-preview">{artifact.content}</div>
+                  </details>
+                ))}
+              </div>
+              <small className="analyzer-note">Dependency-aware execution · artifacts are named outputs and are passed to downstream tasks only when declared as inputs.</small>
             </section>
           )}
 
