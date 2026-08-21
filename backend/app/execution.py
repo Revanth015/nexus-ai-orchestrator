@@ -52,31 +52,35 @@ class MissionExecutionResponse(BaseModel):
 def execute_task(request: ExecutionRequest, *, free_only: bool = True) -> ExecutionResponse:
     route = route_task(request.task_type, free_only=free_only)
 
-    if not route.execution_ready or route.recommended_worker_id is None:
+    if not route.execution_ready:
         raise RuntimeError(
             f"No execution-ready free worker is available for task type '{request.task_type}'."
         )
 
-    # Stage 6 executes connector-backed work through Gemini. Local tools and
-    # validators remain routing candidates until they have task-specific
-    # executors rather than being presented as generic AI workers.
-    if route.recommended_worker_id != "gemini":
+    # Stage 6 currently has a generic connector executor for Gemini. If the
+    # router's preferred worker is not yet executable, use Gemini when it is
+    # live rather than falsely claiming that a local candidate executed the AI task.
+    executable_candidate = next(
+        (
+            item for item in route.candidates
+            if item.worker_id == "gemini" and item.execution_ready
+        ),
+        None,
+    )
+    if executable_candidate is None:
         raise RuntimeError(
-            f"Worker '{route.recommended_worker_id}' is route-ready but has no generic executor in Stage 6."
+            f"Worker routing is ready for '{request.task_type}', but no generic connector executor is currently available."
         )
 
     result = generate_text(request.prompt)
-    candidate = next(
-        item for item in route.candidates if item.worker_id == route.recommended_worker_id
-    )
 
     return ExecutionResponse(
         status="completed",
         task_type=request.task_type,
-        worker_id=route.recommended_worker_id,
-        worker_name=candidate.name,
+        worker_id=executable_candidate.worker_id,
+        worker_name=executable_candidate.name,
         routing_policy=route.routing_policy,
-        route_score=candidate.score,
+        route_score=executable_candidate.score,
         output=result["text"],
         telemetry=result["telemetry"],
     )
