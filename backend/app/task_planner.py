@@ -20,10 +20,11 @@ def _add_task(tasks: list[PlanTask], task_id: str, title: str, task_type: str, *
 
 
 def build_task_plan(analysis: IntentAnalysis) -> TaskPlan:
-    """Build a deterministic DAG from the Stage 2 intent.
+    """Build the NEXUS manager's deterministic task graph.
 
-    No external AI is used. The planner only turns the already-understood
-    intent into explicit tasks, artifacts, and dependency edges.
+    The manager decomposes the objective, defines artifact hand-offs, and
+    places a terminal QA employee on multi-task missions. No AI worker is
+    called while planning.
     """
     tasks: list[PlanTask] = []
 
@@ -86,9 +87,6 @@ def build_task_plan(analysis: IntentAnalysis) -> TaskPlan:
             workers=["ai", "local"],
         )
 
-    # A prompt that does not match a specialized capability is still an
-    # executable request. Keep it as an explicit reasoning task rather than
-    # returning an empty plan, so the execution layer can route it normally.
     if not tasks and "general_reasoning" in analysis.task_types:
         _add_task(
             tasks,
@@ -99,28 +97,39 @@ def build_task_plan(analysis: IntentAnalysis) -> TaskPlan:
             workers=["ai"],
         )
 
-    # Quality review is always a terminal gate unless the user explicitly
-    # disabled it in Stage 2.
-    if analysis.needs_quality_review:
+    # The manager owns the final gate. Any mission containing multiple worker
+    # tasks gets QA even when the user did not explicitly say "review".
+    # Single-task jobs retain the explicit user-requested review behavior.
+    add_quality_gate = analysis.needs_quality_review or len(tasks) > 1
+    if add_quality_gate and not any(task.task_id == "quality_review" for task in tasks):
         deps = [t.task_id for t in tasks]
         inputs = [x for t in tasks for x in t.outputs]
         _add_task(
-            tasks, "quality_review", "Review the work and decide PASS or REWORK", "quality_review",
-            deps=deps, inputs=inputs, outputs=["quality_review"],
-            workers=["validator", "ai"], quality_gate=True,
+            tasks,
+            "quality_review",
+            "Review the work and decide PASS or REWORK",
+            "quality_review",
+            deps=deps,
+            inputs=inputs,
+            outputs=["quality_review"],
+            workers=["validator", "ai"],
+            quality_gate=True,
         )
 
     execution_order = [task.task_id for task in tasks]
     notes: list[str] = [
-        "Tasks are planned locally; no AI worker has been called.",
-        "A dependency means the upstream task must produce its artifact before the downstream task can run.",
+        "NEXUS Manager decomposes the objective locally before calling any worker.",
+        "Each task produces an artifact that can be passed to downstream workers.",
+        "Workers are selected at execution time using capability, free-first status, and live readiness.",
     ]
     if analysis.needs_research and analysis.needs_presentation:
         notes.append("Research output is an input to presentation generation.")
     if analysis.needs_file_analysis and analysis.needs_presentation:
         notes.append("File analysis output is an input to presentation generation.")
-    if analysis.needs_quality_review:
-        notes.append("Quality review is the final gate; REWORK will later route back to the affected task.")
+    if analysis.needs_data_analysis and analysis.needs_presentation:
+        notes.append("Analysis output is an input to presentation generation.")
+    if add_quality_gate:
+        notes.append("Manager QA is the terminal gate; PASS completes the mission and REWORK flags the mission for correction.")
 
     return TaskPlan(
         objective=analysis.objective,
