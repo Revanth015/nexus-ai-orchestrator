@@ -14,12 +14,7 @@ def _has_word(text: str, words: tuple[str, ...]) -> bool:
 
 
 def analyze_prompt(prompt: str) -> IntentAnalysis:
-    """Deterministic first-pass prompt understanding.
-
-    This intentionally uses no external AI or network call. It gives NEXUS a
-    stable contract that can later be validated or replaced by AI-assisted
-    analysis without changing the API surface.
-    """
+    """Deterministic first-pass prompt understanding."""
     text = " ".join(prompt.strip().lower().split())
 
     needs_research = _has_any(text, (
@@ -56,7 +51,9 @@ def analyze_prompt(prompt: str) -> IntentAnalysis:
         "document", "memo", "case study", "content",
     ))
     needs_quality = _has_any(text, (
-        "quality review", "quality check", "review the work", "review the result", "review the output",
+        "quality review", "quality check", "review the work", "review the final work",
+        "review final work", "review the result", "review the output", "final review",
+        "review before delivery", "review before final delivery", "before delivery",
         "validate the result", "validate the output", "validate the work", "check the result",
         "check the output", "check the work", "proofread", "audit the result", "audit the output",
         "verify the result", "verify the output", "quality assurance", "qa review",
@@ -64,7 +61,6 @@ def analyze_prompt(prompt: str) -> IntentAnalysis:
         "don't review", "do not review", "skip review", "no quality check", "without review",
     ))
 
-    # A creation verb combined with a visual noun is also an image request.
     if not needs_image and _has_word(text, ("create", "generate", "make", "design", "draw")) and _has_word(
         text, ("infographic", "diagram", "visual", "graphic", "illustration", "poster", "image")
     ):
