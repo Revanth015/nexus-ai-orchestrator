@@ -14,6 +14,7 @@ from .worker_registry import list_workers
 from .worker_router import WorkerRouteResponse, route_task
 from .collaboration_planner import CollaborationDecision, collaboration_history, plan_collaboration
 from .adaptive_manager import AdaptiveMissionState, classify_replan_signal
+from .audit_log import list_events, mission_summary
 
 app = FastAPI(title=settings.app_name, version="0.1.0", description="Free-first AI orchestration backend for NEXUS.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -36,7 +37,6 @@ async def upload_file(file: UploadFile = File(...)) -> dict[str, object]:
 
 @app.get("/workers")
 def workers() -> dict[str, object]: return {"free_only": settings.free_only, "workers": [worker.model_dump(mode="json") for worker in list_workers()], "note": "Routing scores are dynamic priors: live readiness plus observed task-specific performance update allocation over time."}
-
 @app.get("/workers/learning")
 def workers_learning() -> dict[str, object]: return learning_snapshot()
 @app.get("/workers/collaboration")
@@ -50,19 +50,20 @@ def workers_self_initialize_run() -> dict[str, object]:
 
 @app.get("/route/{task_type}", response_model=WorkerRouteResponse)
 def route(task_type: str) -> WorkerRouteResponse: return route_task(task_type, free_only=settings.free_only)
-
 @app.post("/manager/decide/{task_type}", response_model=ManagerExecutionDecision)
-def manager_decide_endpoint(task_type: str) -> ManagerExecutionDecision:
-    return decide_worker_for_task(task_type, free_only=settings.free_only)
+def manager_decide_endpoint(task_type: str) -> ManagerExecutionDecision: return decide_worker_for_task(task_type, free_only=settings.free_only)
+
+@app.get("/audit/events")
+def audit_events(mission_id: str | None = None, task_id: str | None = None, limit: int = 100) -> dict[str, object]: return {"events": list_events(mission_id=mission_id, task_id=task_id, limit=limit)}
+@app.get("/audit/missions/{mission_id}")
+def audit_mission(mission_id: str) -> dict[str, object]: return mission_summary(mission_id)
 
 @app.post("/collaboration/plan", response_model=CollaborationDecision)
 def collaboration_plan(request: PromptRequest) -> CollaborationDecision:
     analysis = analyze_prompt(request.prompt); task_type = analysis.task_types[0] if analysis.task_types else "general_reasoning"; return plan_collaboration(task_type, request.prompt, free_only=settings.free_only)
-
 @app.post("/adaptive/replan")
 def adaptive_replan(request: PromptRequest) -> dict[str, object]:
     state = AdaptiveMissionState(objective=request.prompt); signal = classify_replan_signal(status="failed"); decision = state.replan_decision(signal["trigger"], "unknown", signal["detail"]); return {"status": "replan_ready", "decision": decision, "state": state.snapshot()}
-
 @app.post("/adaptive/observe")
 def adaptive_observe(request: dict[str, object]) -> dict[str, object]:
     objective = str(request.get("objective", "Adaptive NEXUS mission")); state = AdaptiveMissionState(objective=objective); task_id = str(request.get("task_id", "unknown")); status = str(request.get("status", "completed")); missing = [str(x) for x in request.get("missing_inputs", [])] if isinstance(request.get("missing_inputs", []), list) else []; recommendation = request.get("qa_recommendation"); problem = request.get("qa_problem")
@@ -77,7 +78,6 @@ def execute(request: ExecutionRequest) -> ExecutionResponse:
     try: return execute_task(request, free_only=settings.free_only)
     except FileNotFoundError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc: raise HTTPException(status_code=502, detail=str(exc)) from exc
-
 @app.post("/execute-mission", response_model=MissionExecutionResponse)
 def execute_mission_endpoint(request: MissionExecutionRequest) -> MissionExecutionResponse:
     try: return execute_mission(request, free_only=settings.free_only)
