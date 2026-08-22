@@ -1,3 +1,4 @@
+from threading import RLock
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
@@ -10,6 +11,7 @@ from .planner_models import PlanResponse
 from .prompt_analyzer import analyze_prompt
 from .prompt_models import PromptAnalysisResponse, PromptRequest
 from .task_planner import build_task_plan
+from . import worker_learning as _worker_learning
 from .worker_learning import learning_snapshot, self_initialize, run_self_initialization
 from .worker_registry import list_workers
 from .worker_router import WorkerRouteResponse, route_task
@@ -17,6 +19,10 @@ from .collaboration_planner import CollaborationDecision, collaboration_history,
 from .adaptive_manager import AdaptiveMissionState, classify_replan_signal
 from .audit_log import list_events, mission_summary
 from .mission_memory import create_mission, get_mission, update_mission, transition, recent_memory, memory_snapshot
+
+# Self-assessment can call the worker registry while holding the learning lock.
+# Use a re-entrant lock so nested learning reads do not deadlock the API.
+_worker_learning._LOCK = RLock()
 
 app = FastAPI(title=settings.app_name, version="0.1.0", description="Free-first AI orchestration backend for NEXUS.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
