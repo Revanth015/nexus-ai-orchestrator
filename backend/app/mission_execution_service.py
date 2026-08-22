@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .audit_log import decision_record, record_event
 from .execution import MissionExecutionRequest, MissionExecutionResponse, execute_mission as run_mission
-from .mission_memory import add_artifact, add_decision, add_qa_finding, add_task, complete_mission, create_mission, record_resource_use, transition, update_mission, get_mission
+from .mission_memory import add_artifact, add_collaboration, add_decision, add_qa_finding, add_task, complete_mission, create_mission, consume_reserved_resources, release_reserved_resources, reserve_resources, transition, update_mission, get_mission
 
 
 def execute_mission_with_memory(request: MissionExecutionRequest, *, free_only: bool = True) -> MissionExecutionResponse:
@@ -33,6 +33,9 @@ def execute_mission_with_memory(request: MissionExecutionRequest, *, free_only: 
                     if worker_id and worker_id not in current:
                         current.append(worker_id)
                 update_mission(mission_id, active_workers=current)
+            if task.collaborators:
+                add_collaboration(mission_id, {"task_id": task.task_id, "primary_worker": task.worker_id, "collaborators": task.collaborators, "sprint": task.sprint, "status": task.status})
+                record_event("employee_collaboration", mission_id=mission_id, task_id=task.task_id, data={"primary_worker": task.worker_id, "collaborators": task.collaborators})
             record_event("task_execution", mission_id=mission_id, task_id=task.task_id, actor=task.worker_id or "nexus-manager", data={
                 "status": task.status, "task_type": task.task_type, "worker_id": task.worker_id,
                 "collaborators": task.collaborators, "candidate_worker_ids": task.candidate_worker_ids,
@@ -62,8 +65,13 @@ def execute_mission_with_memory(request: MissionExecutionRequest, *, free_only: 
                 artifact = next((a for a in result.artifacts if a.artifact_id == artifact_id), None)
                 if artifact:
                     add_artifact(mission_id, artifact.model_dump(mode="json"))
-            if task.status in {"completed", "reviewed"}:
-                record_resource_use(mission_id, int(max(1, round(task.manager_resource_cost or 1))))
+            if task.status in {"completed", "reviewed"} and task.manager_resource_cost is not None:
+                cost = float(task.manager_resource_cost)
+                try:
+                    reserve_resources(mission_id, cost)
+                    consume_reserved_resources(mission_id, cost)
+                except ValueError as exc:
+                    record_event("resource_accounting_warning", mission_id=mission_id, task_id=task.task_id, data={"error": str(exc), "cost": cost})
 
         final_quality = next((task.quality_score for task in reversed(result.tasks) if task.quality_score is not None), None)
         final_review = next((task for task in reversed(result.tasks) if task.task_type == "quality_review" and task.status == "reviewed"), None)
@@ -74,9 +82,9 @@ def execute_mission_with_memory(request: MissionExecutionRequest, *, free_only: 
 
         final_state = "COMPLETED" if result.status == "completed" else ("REWORK_LIMIT_REACHED" if result.status == "rework_limit_reached" else "FAILED")
         transition(mission_id, final_state, reason=f"Mission result: {result.status}; final Manager decision: {result.manager_decision}")
-        actual_resource_used = min(request.resource_budget, sum(int(max(1, round(t.manager_resource_cost or 1))) for t in result.tasks if t.status in {"completed", "reviewed"}))
-        update_mission(mission_id, rework_count=result.rework_count, resource_used=actual_resource_used)
-        record_event("manager_final_decision", mission_id=mission_id, data={"decision": result.manager_decision, "status": result.status, "quality_score": final_quality, "rework_count": result.rework_count})
+        actual_resource_used = min(request.resource_budget, sum(float(t.manager_resource_cost or 0) for t in result.tasks if t.status in {"completed", "reviewed"}))
+        update_mission(mission_id, rework_count=result.rework_count, resource_used=actual_resource_used, resource_reserved=0.0)
+        record_event("manager_final_decision", mission_id=mission_id, data={"decision": result.manager_decision, "status": result.status, "quality_score": final_quality, "rework_count": result.rework_count, "resource_used": actual_resource_used})
         if result.status == "completed":
             complete_mission(mission_id, final_decision=result.manager_decision, final_quality=final_quality)
         else:
