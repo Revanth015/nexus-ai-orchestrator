@@ -24,11 +24,6 @@ class WorkerType(str, Enum):
     LOCAL = "local"
 
 
-class CorporateRole(str, Enum):
-    EMPLOYEE = "employee"
-    QA_EMPLOYEE = "qa_employee"
-
-
 class TaskStatus(str, Enum):
     PENDING = "pending"
     READY = "ready"
@@ -93,7 +88,6 @@ class WorkerProfile(BaseModel):
     name: str
     provider: str
     worker_type: WorkerType
-    corporate_role: CorporateRole = CorporateRole.EMPLOYEE
     capabilities: CapabilityScores = Field(default_factory=CapabilityScores)
     resource: ResourceState = Field(default_factory=ResourceState)
     enabled: bool = True
