@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Callable
 from pydantic import BaseModel, Field
 from .ai_connectors import generate_claude, generate_perplexity
 from .file_store import read_file
@@ -10,6 +11,7 @@ from .prompt_analyzer import analyze_prompt
 from .task_planner import build_task_plan
 from .worker_learning import record_result, task_performance
 from .worker_router import route_task
+from .collaboration_planner import plan_collaboration
 from .manager_decision import decide as manager_decide
 
 class ExecutionRequest(BaseModel):
@@ -30,30 +32,66 @@ class ArtifactRecord(BaseModel):
     artifact_id: str; task_id: str; name: str; artifact_type: str; content: str; size_chars: int; preview: str
 
 class TaskExecutionRecord(BaseModel):
-    task_id: str; task_type: str; title: str; status: str; worker_id: str | None = None; worker_name: str | None = None; output: str | None = None; route_score: float | None = None; telemetry: dict[str, object] | None = None; artifact_ids: list[str] = []; quality_decision: str | None = None; review_recommendation: str | None = None; manager_decision: str | None = None; rework_number: int = 0; rework_problem: str | None = None; sprint: int = 1; error: str | None = None
+    task_id: str; task_type: str; title: str; status: str; worker_id: str | None = None; worker_name: str | None = None; output: str | None = None; route_score: float | None = None; telemetry: dict[str, object] | None = None; artifact_ids: list[str] = Field(default_factory=list); collaborators: list[str] = Field(default_factory=list); quality_decision: str | None = None; quality_score: float | None = None; review_recommendation: str | None = None; manager_decision: str | None = None; manager_rationale: str | None = None; rework_number: int = 0; rework_problem: str | None = None; sprint: int = 1; error: str | None = None
 
 class MissionExecutionResponse(BaseModel):
     status: str; objective: str; execution_order: list[str]; manager_decision: str; rework_count: int; max_reworks: int; tasks: list[TaskExecutionRecord]; artifacts: list[ArtifactRecord]
 
 class ManagerExecutionDecision(BaseModel):
-    action: str; rationale: str; confidence: float; estimated_value: float; resource_cost: float; verification_required: bool; collaboration_required: bool; selected_worker_id: str | None = None
+    action: str; rationale: str; confidence: float; estimated_value: float; resource_cost: float; verification_required: bool; collaboration_required: bool; selected_worker_id: str | None = None; collaborator_worker_ids: list[str] = Field(default_factory=list)
 
-def decide_worker_for_task(task_type: str, *, free_only: bool = True, budget_remaining: int = 10, exclude_worker_ids: set[str] | None = None) -> ManagerExecutionDecision:
+_TASK_METRICS = {
+    "research": (60, 45), "file_analysis": (55, 50), "data_analysis": (65, 55),
+    "writing": (40, 35), "presentation": (70, 60), "image_generation": (55, 45),
+    "coding": (70, 65), "quality_review": (80, 85), "general_reasoning": (45, 40),
+}
+
+
+def _task_complexity(task_type: str, prompt: str) -> float:
+    base = _TASK_METRICS.get(task_type, (50, 50))[0]
+    text = prompt.lower()
+    signals = ("compare", "multiple", "strategy", "recommend", "critical", "verify", "sources", "complex", "integrate", "optimize")
+    base += min(25, sum(word in text for word in signals) * 3)
+    if len(prompt) > 1200: base += 10
+    return min(100, base)
+
+
+def _quality_risk(task_type: str, prompt: str) -> float:
+    base = _TASK_METRICS.get(task_type, (50, 50))[1]
+    text = prompt.lower()
+    if any(x in text for x in ("financial", "medical", "legal", "safety", "critical", "ceo", "decision")): base += 15
+    return min(100, base)
+
+
+def decide_worker_for_task(task_type: str, *, prompt: str = "", free_only: bool = True, budget_remaining: int = 10, exclude_worker_ids: set[str] | None = None) -> ManagerExecutionDecision:
     route = route_task(task_type, free_only=free_only, exclude_worker_ids=exclude_worker_ids)
     candidates = [c for c in route.candidates if c.execution_ready and c.eligible_for_task]
     if not candidates:
         return ManagerExecutionDecision(action="STOP", rationale=f"No execution-ready worker is available for {task_type} after applying Manager exclusions.", confidence=0, estimated_value=0, resource_cost=0, verification_required=False, collaboration_required=False)
     evidence = [(c, task_performance(c.worker_id, task_type)) for c in candidates]
     best, performance = max(evidence, key=lambda item: (item[1].get("score", 0), item[1].get("confidence", 0), item[0].score))
-    decision = manager_decide(task_type=task_type, complexity=25, confidence=performance.get("confidence", 0), quality_risk=35, worker_score=performance.get("score", 0), collaboration_score=0, latency_ms=performance.get("avg_latency_ms", 0), budget_remaining=budget_remaining, evidence_gap=100-performance.get("confidence", 0))
-    return ManagerExecutionDecision(action=decision.action, rationale=decision.rationale, confidence=decision.confidence, estimated_value=decision.estimated_value, resource_cost=decision.resource_cost, verification_required=decision.verification_required, collaboration_required=decision.collaboration_required, selected_worker_id=None if decision.action == "STOP" else best.worker_id)
+    complexity = _task_complexity(task_type, prompt)
+    quality_risk = _quality_risk(task_type, prompt)
+    confidence = float(performance.get("confidence", 0))
+    collaboration_score = 0.0
+    if len(candidates) > 1:
+        second = sorted(candidates, key=lambda c: c.score, reverse=True)[1]
+        collaboration_score = max(0.0, min(100.0, 50.0 + abs(best.score - second.score) * -1.0 + second.capability_score * 0.5))
+    decision = manager_decide(task_type=task_type, complexity=complexity, confidence=confidence, quality_risk=quality_risk, worker_score=performance.get("score", 0), collaboration_score=collaboration_score, latency_ms=performance.get("avg_latency_ms", 0), budget_remaining=budget_remaining, evidence_gap=100-confidence)
+    collaborator_ids: list[str] = []
+    if decision.collaboration_required and len(candidates) > 1:
+        collaborator_ids = [c.worker_id for c in sorted(candidates, key=lambda c: c.score, reverse=True) if c.worker_id != best.worker_id][:1]
+    return ManagerExecutionDecision(action=decision.action, rationale=decision.rationale, confidence=decision.confidence, estimated_value=decision.estimated_value, resource_cost=decision.resource_cost, verification_required=decision.verification_required, collaboration_required=decision.collaboration_required, selected_worker_id=None if decision.action == "STOP" else best.worker_id, collaborator_worker_ids=collaborator_ids)
+
 
 def _load_files(file_ids):
     if len(file_ids) > 10: raise ValueError("A maximum of 10 files can be supplied to one execution.")
     return [read_file(file_id) for file_id in file_ids]
 
+
 def _file_context_text(files):
     return "\n\n".join(f"FILE: {item.get('filename', item.get('file_id', 'unknown'))}\nTYPE: {item.get('extension', '')}\nEXTRACTED CONTENT:\n{str(item.get('content', ''))[:12000]}" for item in files)
+
 
 def _run_worker(worker_id, task_type, prompt, files):
     if worker_id == "gemini": return generate_text(prompt)
@@ -62,12 +100,12 @@ def _run_worker(worker_id, task_type, prompt, files):
     if worker_id in {"local-tools", "local-validator"}: return execute_local_task(task_type, prompt, file_context=files)
     raise RuntimeError(f"Worker '{worker_id}' has no registered executor.")
 
+
 def execute_task(request: ExecutionRequest, *, free_only=True) -> ExecutionResponse:
     route = route_task(request.task_type, free_only=free_only, exclude_worker_ids=set(request.excluded_worker_ids))
     if request.forced_worker_id:
         candidate = next((item for item in route.candidates if item.worker_id == request.forced_worker_id and item.execution_ready and item.eligible_for_task), None)
-        if candidate is None:
-            raise RuntimeError(f"Manager selected worker '{request.forced_worker_id}', but that worker is not execution-ready, eligible, or allowed for this task.")
+        if candidate is None: raise RuntimeError(f"Manager selected worker '{request.forced_worker_id}', but that worker is not execution-ready, eligible, or allowed for this task.")
         routing_policy = "manager_directed_allocation"
     else:
         if not route.execution_ready or not route.recommended_worker_id: raise RuntimeError(f"No execution-ready free worker is available for task type '{request.task_type}'.")
@@ -80,6 +118,7 @@ def execute_task(request: ExecutionRequest, *, free_only=True) -> ExecutionRespo
     telemetry = result["telemetry"]; record_result(candidate.worker_id, task_type=request.task_type, success=True, latency_ms=float(telemetry.get("last_latency_ms") or 0))
     return ExecutionResponse(status="completed", task_type=request.task_type, worker_id=candidate.worker_id, worker_name=candidate.name, routing_policy=routing_policy, route_score=candidate.score, output=str(result["text"]), telemetry=telemetry)
 
+
 def _task_prompt(objective, title, task_type, inputs, artifacts, feedback=None):
     context = ""
     if inputs:
@@ -87,52 +126,79 @@ def _task_prompt(objective, title, task_type, inputs, artifacts, feedback=None):
         if supplied: context = "\n\nPrevious task outputs:\n" + "\n\n".join(supplied)
     feedback_text = f"\n\nQA problem to fix:\n{feedback}" if feedback else ""
     role = ""
-    if task_type == "quality_review": role = "\n\nReview the upstream employee output independently for factual accuracy, completeness, relevance, structure, consistency, and compliance. Do not make the final acceptance decision. End exactly with: Problem identified: <specific problem or None identified.> and Recommendation to NEXUS Manager: <PASS or REWORK>."
+    if task_type == "quality_review": role = "\n\nReview the upstream employee output independently for factual accuracy, completeness, relevance, structure, consistency, and compliance. Do not make the final acceptance decision. End exactly with: Quality score: <0-100>\nProblem identified: <specific problem or None identified.>\nRecommendation to NEXUS Manager: <PASS or REWORK>."
     return f"Mission objective:\n{objective}\n\nCurrent task: {title}\nTask type: {task_type}\nComplete only this task and produce a concise artifact for downstream employees.{role}{context}{feedback_text}"
+
 
 def _artifact_type(task_type):
     return {"research":"research_brief","file_analysis":"file_analysis","data_analysis":"analysis_findings","presentation":"presentation_draft","quality_review":"quality_review","writing":"written_draft","image_generation":"image_output","coding":"code_output","general_reasoning":"reasoning_output"}.get(task_type,"task_output")
+
 
 def _review_recommendation(output):
     match = re.search(r"Recommendation to NEXUS Manager:\s*(PASS|REWORK)", output, re.I)
     if match: return match.group(1).upper()
     return next((line.strip().upper() for line in reversed(output.splitlines()) if line.strip().upper() in {"PASS","REWORK"}), None)
 
+
 def _review_problem(output):
     match = re.search(r"Problem identified:\s*(.+)", output, re.I)
     return match.group(1).strip() if match else None
 
+
+def _quality_score(output):
+    match = re.search(r"Quality score:\s*(\d+(?:\.\d+)?)", output, re.I)
+    return max(0.0, min(100.0, float(match.group(1)))) if match else None
+
+
 def _mission_response(status, plan, execution_order, manager_decision, rework_count, records, artifacts):
     return MissionExecutionResponse(status=status, objective=plan.objective, execution_order=execution_order, manager_decision=manager_decision, rework_count=rework_count, max_reworks=3, tasks=records, artifacts=artifacts)
 
-def execute_mission(request: MissionExecutionRequest, *, free_only=True) -> MissionExecutionResponse:
+
+def execute_mission(request: MissionExecutionRequest, *, free_only=True, state_callback: Callable[[str, dict], None] | None = None) -> MissionExecutionResponse:
     analysis = analyze_prompt(request.prompt); plan = build_task_plan(analysis); artifacts_by_name={}; rework_feedback_by_task={}; artifact_records=[]; records=[]; execution_order=list(plan.execution_order); task_by_id={t.task_id:t for t in plan.tasks}; rework_count=0; max_reworks=3; index=0
+    if state_callback: state_callback("EXECUTING", {"objective": plan.objective, "task_count": len(plan.tasks), "sprint": 1})
     while index < len(execution_order):
-        task=task_by_id[execution_order[index]]; missing=[dep for dep in task.dependencies if not any(r.task_id==dep and r.status in {"completed","reviewed"} for r in records)]
+        task=task_by_id[execution_order[index]]
+        if state_callback: state_callback("REVIEWING" if task.task_type == "quality_review" else "EXECUTING", {"task_id": task.task_id, "task_type": task.task_type, "sprint": task.sprint})
+        missing=[dep for dep in task.dependencies if not any(r.task_id==dep and r.status in {"completed","reviewed"} for r in records)]
         if missing:
             records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="blocked",sprint=task.sprint,error=f"Dependencies not completed: {', '.join(missing)}")); break
         try:
-            feedback=rework_feedback_by_task.get(task.task_id)
-            is_review = task.task_type == "quality_review"
-            excluded = {r.worker_id for r in records if r.worker_id} if is_review else set()
-            manager_allocation = decide_worker_for_task(task.task_type, free_only=free_only, budget_remaining=max(1, 10-len(records)), exclude_worker_ids=excluded)
-            if manager_allocation.action == "STOP" or not manager_allocation.selected_worker_id:
-                raise RuntimeError(f"Manager stopped task '{task.title}': {manager_allocation.rationale}")
+            feedback=rework_feedback_by_task.get(task.task_id); is_review=task.task_type == "quality_review"; excluded={r.worker_id for r in records if r.worker_id} if is_review else set()
+            manager_allocation=decide_worker_for_task(task.task_type,prompt=_task_prompt(plan.objective,task.title,task.task_type,task.inputs,artifacts_by_name,feedback),free_only=free_only,budget_remaining=max(1,10-len(records)),exclude_worker_ids=excluded)
+            if manager_allocation.action == "STOP" or not manager_allocation.selected_worker_id: raise RuntimeError(f"Manager stopped task '{task.title}': {manager_allocation.rationale}")
+            if manager_allocation.collaboration_required and manager_allocation.collaborator_worker_ids and state_callback:
+                state_callback("COLLABORATING", {"task_id": task.task_id, "workers": [manager_allocation.selected_worker_id, *manager_allocation.collaborator_worker_ids]})
             execution=execute_task(ExecutionRequest(task_type=task.task_type,prompt=_task_prompt(plan.objective,task.title,task.task_type,task.inputs,artifacts_by_name,feedback),file_ids=request.file_ids,forced_worker_id=manager_allocation.selected_worker_id,excluded_worker_ids=list(excluded)),free_only=free_only)
+            collaborator_outputs=[]
+            for collaborator_id in manager_allocation.collaborator_worker_ids:
+                if collaborator_id in excluded or collaborator_id == execution.worker_id: continue
+                collab_prompt=_task_prompt(plan.objective,f"Collaborative perspective for: {task.title}",task.task_type,task.inputs,artifacts_by_name,feedback) + "\n\nYou are a collaborating employee. Provide an independent perspective that the primary employee can use. Do not make the final Manager decision."
+                collab=execute_task(ExecutionRequest(task_type=task.task_type,prompt=collab_prompt,file_ids=request.file_ids,forced_worker_id=collaborator_id,excluded_worker_ids=list(excluded)),free_only=free_only)
+                collaborator_outputs.append(collab.output)
+            combined_output=execution.output
+            if collaborator_outputs: combined_output += "\n\n--- COLLABORATOR INPUT ---\n" + "\n\n".join(collaborator_outputs)
             artifact_ids=[]
             for output_name in task.outputs:
-                artifact_id=f"{task.task_id}:{output_name}"; content=execution.output; artifact_records.append(ArtifactRecord(artifact_id=artifact_id,task_id=task.task_id,name=output_name,artifact_type=_artifact_type(task.task_type),content=content,size_chars=len(content),preview=content[:280].replace("\n"," "))); artifacts_by_name[output_name]=content; artifact_ids.append(artifact_id)
+                artifact_id=f"{task.task_id}:{output_name}"; content=combined_output; artifact_records.append(ArtifactRecord(artifact_id=artifact_id,task_id=task.task_id,name=output_name,artifact_type=_artifact_type(task.task_type),content=content,size_chars=len(content),preview=content[:280].replace("\n"," "))); artifacts_by_name[output_name]=content; artifact_ids.append(artifact_id)
             if task.quality_gate:
-                recommendation=_review_recommendation(execution.output) or "REWORK"; problem=_review_problem(execution.output); manager_decision="ACCEPT" if recommendation=="PASS" else "REWORK"; record_result(execution.worker_id,task_type="quality_review",success=True,latency_ms=float(execution.telemetry.get("last_latency_ms") or 0),quality=recommendation)
-                records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="reviewed",worker_id=execution.worker_id,worker_name=execution.worker_name,output=execution.output,route_score=execution.route_score,telemetry=execution.telemetry,artifact_ids=artifact_ids,quality_decision=recommendation,review_recommendation=recommendation,manager_decision=manager_decision,rework_number=rework_count,rework_problem=problem,sprint=task.sprint))
+                recommendation=_review_recommendation(execution.output) or "REWORK"; problem=_review_problem(execution.output); quality_score=_quality_score(execution.output); manager_decision="ACCEPT" if recommendation=="PASS" else "REWORK"; record_result(execution.worker_id,task_type="quality_review",success=True,latency_ms=float(execution.telemetry.get("last_latency_ms") or 0),quality=recommendation)
+                records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="reviewed",worker_id=execution.worker_id,worker_name=execution.worker_name,output=execution.output,route_score=execution.route_score,telemetry=execution.telemetry,artifact_ids=artifact_ids,quality_decision=recommendation,quality_score=quality_score,review_recommendation=recommendation,manager_decision=manager_decision,manager_rationale=manager_allocation.rationale,rework_number=rework_count,rework_problem=problem,sprint=task.sprint))
                 if manager_decision=="REWORK":
-                    if rework_count>=max_reworks: return _mission_response("rework_limit_reached",plan,execution_order,"REWORK",rework_count,records,artifact_records)
+                    if rework_count>=max_reworks:
+                        if state_callback: state_callback("REWORK_LIMIT_REACHED", {"task_id": task.task_id, "problem": problem, "rework_count": rework_count})
+                        return _mission_response("rework_limit_reached",plan,execution_order,"REWORK",rework_count,records,artifact_records)
                     target=next((r for r in reversed(records[:-1]) if r.status=="completed" and r.task_type!="quality_review"),None)
                     if target is None: return _mission_response("rework_required",plan,execution_order,"REWORK",rework_count,records,artifact_records)
-                    rework_count+=1; target_task=task_by_id[target.task_id]; rework_id=f"{target.task_id}_rework_{rework_count}"; rework_task=target_task.model_copy(update={"task_id":rework_id,"title":f"Rework #{rework_count}: {target.title}","dependencies":[task.task_id],"inputs":list(target_task.outputs),"quality_gate":False,"outputs":[f"{target.task_type}_rework_{rework_count}"],"sprint":task.sprint+1}); task_by_id[rework_id]=rework_task; rework_feedback_by_task[rework_id]=problem or "Correct the reviewed work using independent inspection."; execution_order.insert(index+1,rework_id); review_id=f"quality_review_{rework_count}"; review_task=task_by_id[task.task_id].model_copy(update={"task_id":review_id,"title":f"Review rework #{rework_count}","dependencies":[rework_id],"inputs":list(rework_task.outputs),"outputs":[f"quality_review_{rework_count}"],"sprint":task.sprint+1}); task_by_id[review_id]=review_task; execution_order.insert(index+2,review_id)
+                    rework_count+=1
+                    if state_callback: state_callback("REWORKING", {"task_id": target.task_id, "rework_number": rework_count, "problem": problem})
+                    target_task=task_by_id[target.task_id]; rework_id=f"{target.task_id}_rework_{rework_count}"; rework_task=target_task.model_copy(update={"task_id":rework_id,"title":f"Rework #{rework_count}: {target.title}","dependencies":[task.task_id],"inputs":list(target_task.outputs),"quality_gate":False,"outputs":[f"{target.task_type}_rework_{rework_count}"],"sprint":task.sprint+1}); task_by_id[rework_id]=rework_task; rework_feedback_by_task[rework_id]=problem or "Correct the reviewed work using independent inspection."; execution_order.insert(index+1,rework_id); review_id=f"quality_review_{rework_count}"; review_task=task_by_id[task.task_id].model_copy(update={"task_id":review_id,"title":f"Review rework #{rework_count}","dependencies":[rework_id],"inputs":list(rework_task.outputs),"outputs":[f"quality_review_{rework_count}"],"sprint":task.sprint+1}); task_by_id[review_id]=review_task; execution_order.insert(index+2,review_id)
                 index+=1; continue
-            records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="completed",worker_id=execution.worker_id,worker_name=execution.worker_name,output=execution.output,route_score=execution.route_score,telemetry=execution.telemetry,artifact_ids=artifact_ids,manager_decision=manager_allocation.action,sprint=task.sprint))
+            records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="completed",worker_id=execution.worker_id,worker_name=execution.worker_name,output=combined_output,route_score=execution.route_score,telemetry=execution.telemetry,artifact_ids=artifact_ids,collaborators=manager_allocation.collaborator_worker_ids,manager_decision=manager_allocation.action,manager_rationale=manager_allocation.rationale,sprint=task.sprint))
         except Exception as exc:
             records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="failed",sprint=task.sprint,error=str(exc),manager_decision="STOP")); break
         index+=1
-    manager_decision="ACCEPT" if records and records[-1].manager_decision=="ACCEPT" else "PENDING"; status="completed" if manager_decision=="ACCEPT" else "failed"; return _mission_response(status,plan,execution_order,manager_decision,rework_count,records,artifact_records)
+    final_quality=next((r.quality_score for r in reversed(records) if r.quality_score is not None),None)
+    manager_decision="ACCEPT" if records and records[-1].manager_decision=="ACCEPT" else "PENDING"; status="completed" if manager_decision=="ACCEPT" else "failed"
+    if state_callback: state_callback("MANAGER_REVIEW", {"manager_decision": manager_decision, "quality_score": final_quality})
+    return _mission_response(status,plan,execution_order,manager_decision,rework_count,records,artifact_records)
