@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Activity, BrainCircuit, CheckCircle2, CircleDot, Paperclip, RefreshCw, Send, Users, X } from "lucide-react";
+import { Activity, BrainCircuit, CheckCircle2, CircleDot, Paperclip, RefreshCw, Send, Users, X, ClipboardCheck } from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 const stateClass = (state = "PLANNING") => `mission-state state-${state.toLowerCase()}`;
@@ -15,6 +15,9 @@ export default function ManagerDashboard() {
   const [error, setError] = useState("");
   const [running, setRunning] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [assessment, setAssessment] = useState(null);
+  const [assessmentBusy, setAssessmentBusy] = useState(false);
+  const [assessmentMode, setAssessmentMode] = useState("prepare");
   const fileInputRef = useRef(null);
 
   const load = async () => {
@@ -36,24 +39,37 @@ export default function ManagerDashboard() {
 
   useEffect(() => { load(); }, []);
 
+  const runAssessment = async (run = false) => {
+    if (assessmentBusy) return;
+    setAssessmentBusy(true); setError("");
+    try {
+      const endpoint = run ? "/workers/self-initialize/run" : "/workers/self-initialize";
+      const response = await fetch(`${API_BASE}${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || `Self assessment failed (${response.status})`);
+      setAssessment(result);
+      setAssessmentMode(run ? "results" : "prepared");
+      await load();
+    } catch (e) {
+      setError(e.message || "Self assessment failed");
+    } finally {
+      setAssessmentBusy(false);
+    }
+  };
+
   const uploadFiles = async (files) => {
     if (!files?.length) return;
     setUploading(true); setError("");
     try {
       for (const file of Array.from(files)) {
-        const formData = new FormData();
-        formData.append("file", file);
+        const formData = new FormData(); formData.append("file", file);
         const response = await fetch(`${API_BASE}/files/upload`, { method: "POST", body: formData });
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || `Upload failed (${response.status})`);
         setUploadedFiles(current => [...current, result.file]);
       }
-    } catch (e) {
-      setError(e.message || "File upload failed");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
+    } catch (e) { setError(e.message || "File upload failed"); }
+    finally { setUploading(false); if (fileInputRef.current) fileInputRef.current.value = ""; }
   };
 
   const removeFile = (fileId) => setUploadedFiles(current => current.filter(file => file.file_id !== fileId));
@@ -69,8 +85,7 @@ export default function ManagerDashboard() {
       if (!response.ok) throw new Error(result.detail || `Mission failed (${response.status})`);
       setExecution(result);
       setMission({ objective: result.objective, state: result.status === "completed" ? "COMPLETED" : result.status === "rework_limit_reached" ? "REWORK_LIMIT_REACHED" : "MANAGER_REVIEW", tasks: result.tasks ?? [], active_workers: [...new Set((result.tasks ?? []).map(t => t.worker_name).filter(Boolean))], rework_count: result.rework_count ?? 0, max_reworks: result.max_reworks ?? 3 });
-      setUploadedFiles([]);
-      await load();
+      setUploadedFiles([]); await load();
     } catch (e) { setError(e.message || "Mission execution failed"); }
     finally { setRunning(false); }
   };
@@ -78,6 +93,7 @@ export default function ManagerDashboard() {
   const completed = execution?.tasks?.filter(t => ["completed", "reviewed"].includes(t.status)).length ?? 0;
   const total = execution?.tasks?.length ?? 0;
   const workersUsed = mission?.active_workers?.length ?? 0;
+  const assessmentWorkers = assessment?.workers ?? [];
 
   return (
     <main className="manager-shell">
@@ -96,11 +112,21 @@ export default function ManagerDashboard() {
           </form>
           {error && <div className="error-card">{error}</div>}
 
+          <section className="manager-card assessment-card">
+            <div className="manager-card-head"><div><span className="eyebrow">WORKFORCE ONBOARDING</span><h2>AI self assessment</h2></div><ClipboardCheck size={18} /></div>
+            <p className="assessment-description">Run NEXUS's task-specific capability benchmarks before live allocation. New employees receive capability priors; existing employees keep their historical task evidence.</p>
+            <div className="assessment-actions">
+              <button type="button" className="assessment-button" disabled={assessmentBusy} onClick={() => runAssessment(false)}><ClipboardCheck size={15} /> {assessmentBusy && assessmentMode === "prepare" ? "Preparing..." : "Prepare assessment"}</button>
+              <button type="button" className="assessment-button primary" disabled={assessmentBusy || assessmentMode !== "prepared"} onClick={() => runAssessment(true)}><Activity size={15} /> {assessmentBusy && assessmentMode === "prepared" ? "Running benchmarks..." : "Run self assessment"}</button>
+            </div>
+            {assessment && <div className="assessment-results"><div className="assessment-summary"><strong>{assessment.status === "initialized" ? "Benchmark plan ready" : "Assessment completed"}</strong><span>{assessment.policy ?? "New workers get benchmarks; existing worker history is preserved."}</span></div>{assessmentWorkers.map((w) => <div className="assessment-worker" key={w.worker_id}><div><strong>{w.worker_id}</strong><small>{w.action ?? w.status ?? "assessed"}</small></div><div className="assessment-stats"><span>Observations <b>{w.observations ?? 0}</b></span><span>Tests <b>{w.tests_completed ?? 0}/{w.tests_total ?? "—"}</b></span>{w.overall_score != null && <span>Score <b>{w.overall_score}</b></span>}{w.confidence != null && <span>Confidence <b>{w.confidence}</b></span>}</div></div>)}</div>}
+          </section>
+
           {mission && <section className="manager-card">
             <div className="manager-card-head"><div><span className="eyebrow">ACTIVE MISSION</span><h2>{mission.objective}</h2></div><span className={stateClass(mission.state)}>{mission.state}</span></div>
             <div className="manager-metrics"><div><strong>{completed}/{total}</strong><small>Tasks completed</small></div><div><strong>{workersUsed}</strong><small>AI employees used</small></div><div><strong>{mission.rework_count}/{mission.max_reworks}</strong><small>Reworks</small></div><div><strong>{execution?.manager_decision ?? "PLANNING"}</strong><small>Manager decision</small></div></div>
             <div className="sprint-line"><span>Sprint 1</span><span>→</span><span>Plan</span><span>→</span><span>Allocate</span><span>→</span><span>Execute</span><span>→</span><span>QA</span><span>→</span><span>Manager review</span></div>
-            {execution?.tasks?.length > 0 && <div className="manager-task-board">{execution.tasks.map((task, i) => <div className="manager-task" key={`${task.task_id}-${i}`}><div className="task-icon">{task.status === "completed" || task.status === "reviewed" ? <CheckCircle2 size={17} /> : <CircleDot size={17} />}</div><div className="task-copy"><strong>{task.title}</strong><small>{task.task_type} · {task.status} · Sprint {task.sprint ?? 1}</small>{task.worker_name && <small>Employee: {task.worker_name} · route score {task.route_score ?? "—"}</small>}{task.rework_problem && <small className="rework-note">Rework problem: {task.rework_problem}</small>}{task.quality_decision && <small>QA: {task.quality_decision} · Manager: {task.manager_decision ?? "pending"}</small>}</div><span className={`task-status ${task.status}`}>{task.status}</span></div>)}</div>}
+            {execution?.tasks?.length > 0 && <div className="manager-task-board">{execution.tasks.map((task, i) => <div className="manager-task" key={`${task.task_id}-${i}`}><div className="task-icon">{task.status === "completed" || task.status === "reviewed" ? <CheckCircle2 size={17} /> : <CircleDot size={17} />}</div><div className="task-copy"><strong>{task.title}</strong><small>{task.task_type} · {task.status} · Sprint {task.sprint ?? 1}</small>{task.worker_name && <small>Employee: {task.worker_name} · route score {task.route_score ?? "—"}</small>}{task.rework_problem && <small className="rework-note">Rework problem: {task.rework_problem}</small>}{task.quality_decision && <small>QA: {task.quality_decision} · Manager: {task.manager_decision ?? "pending"}</small>}{task.error && <small className="rework-note">Execution error: {task.error}</small>}</div><span className={`task-status ${task.status}`}>{task.status}</span></div>)}</div>}
           </section>}
 
           {execution?.artifacts?.length > 0 && <section className="manager-card"><div className="manager-card-head"><div><span className="eyebrow">DELIVERABLES</span><h2>Employee outputs</h2></div><span className="manager-count">{execution.artifacts.length}</span></div>{execution.artifacts.map(a => <details className="manager-artifact" key={a.artifact_id}><summary><strong>{a.name}</strong><span>{a.artifact_type} · {a.size_chars} chars</span></summary><pre>{a.content}</pre></details>)}</section>}
