@@ -4,7 +4,7 @@ from .ai_connections import list_connections
 from .ai_connectors import claude_status, perplexity_status
 from .gemini_connector import runtime_metadata as gemini_runtime_metadata
 from .models import CapabilityScores, FreeStatus, ResourceState, WorkerProfile, WorkerType
-from .worker_learning import get_worker_learning
+from .worker_learning import get_worker_learning, record_result, task_performance
 
 
 _INITIAL_WORKERS = [
@@ -15,7 +15,7 @@ _INITIAL_WORKERS = [
     WorkerProfile(worker_id="gemini", name="Gemini", provider="google", worker_type=WorkerType.AI,
         capabilities=CapabilityScores(reasoning=90, research=82, coding=88, documents=90, presentation=94, data_analysis=88, vision=90, instruction_following=90, reliability=86, efficiency=90), resource=ResourceState(free_status=FreeStatus.UNKNOWN, confidence=0), metadata={"connected": False, "execution_ready": False, "notes": "General AI worker; routing is task-specific."}),
     WorkerProfile(worker_id="claude", name="Claude", provider="anthropic", worker_type=WorkerType.AI,
-        capabilities=CapabilityScores(reasoning=94, research=84, coding=95, documents=94, presentation=86, data_analysis=90, instruction_following=95, reliability=90, efficiency=82), resource=ResourceState(free_status=FreeStatus.UNKNOWN, confidence=0), metadata={"connected": False, "execution_ready": False, "notes": "General AI worker; routing is task-specific."}),
+        capabilities=CapabilityScores(reasoning=94, research=84, coding=95, documents=94, presentation=86, data_analysis=90, vision=90, instruction_following=95, reliability=90, efficiency=82), resource=ResourceState(free_status=FreeStatus.UNKNOWN, confidence=0), metadata={"connected": False, "execution_ready": False, "notes": "General AI worker; routing is task-specific."}),
     WorkerProfile(worker_id="local-validator", name="NEXUS Local Validator", provider="local", worker_type=WorkerType.VALIDATOR,
         capabilities=CapabilityScores(reasoning=78, documents=88, data_analysis=88, instruction_following=92, reliability=98, efficiency=96), resource=ResourceState(free_status=FreeStatus.VERIFIED_FREE, quota_known=True, confidence=100), metadata={"connected": True, "execution_ready": True, "notes": "Deterministic validation worker; can be selected dynamically for review tasks."}),
 ]
