@@ -15,20 +15,18 @@ from .worker_router import WorkerRouteResponse, route_task
 from .collaboration_planner import CollaborationDecision, collaboration_history, plan_collaboration
 from .adaptive_manager import AdaptiveMissionState, classify_replan_signal
 from .audit_log import list_events, mission_summary
+from .mission_memory import create_mission, get_mission, update_mission, transition, add_task, add_artifact, add_decision, add_qa_finding, add_collaboration, record_resource_use, recent_memory, memory_snapshot
 
 app = FastAPI(title=settings.app_name, version="0.1.0", description="Free-first AI orchestration backend for NEXUS.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/health")
 def health() -> dict[str, object]: return {"status": "ok", "service": settings.app_name, "free_only": settings.free_only, "background_execution": settings.background_execution}
-
 @app.post("/analyze", response_model=PromptAnalysisResponse)
 def analyze(request: PromptRequest) -> PromptAnalysisResponse: return PromptAnalysisResponse(prompt=request.prompt, analysis=analyze_prompt(request.prompt))
-
 @app.post("/plan", response_model=PlanResponse)
 def plan(request: PromptRequest) -> PlanResponse:
     analysis = analyze_prompt(request.prompt); return PlanResponse(plan=build_task_plan(analysis))
-
 @app.post("/files/upload")
 async def upload_file(file: UploadFile = File(...)) -> dict[str, object]:
     try: return {"status": "uploaded", "file": save_upload(file.filename or "uploaded_file", await file.read())}
@@ -47,17 +45,42 @@ def workers_self_initialize() -> dict[str, object]: return self_initialize()
 def workers_self_initialize_run() -> dict[str, object]:
     try: return run_self_initialization()
     except Exception as exc: raise HTTPException(status_code=502, detail=f"Worker self-initialization failed: {exc}") from exc
-
 @app.get("/route/{task_type}", response_model=WorkerRouteResponse)
 def route(task_type: str) -> WorkerRouteResponse: return route_task(task_type, free_only=settings.free_only)
 @app.post("/manager/decide/{task_type}", response_model=ManagerExecutionDecision)
 def manager_decide_endpoint(task_type: str) -> ManagerExecutionDecision: return decide_worker_for_task(task_type, free_only=settings.free_only)
 
+@app.post("/missions")
+def missions_create(request: PromptRequest) -> dict[str, object]: return {"status": "created", "mission": create_mission(request.prompt)}
+@app.get("/missions/{mission_id}")
+def missions_get(mission_id: str) -> dict[str, object]:
+    mission = get_mission(mission_id)
+    if not mission: raise HTTPException(status_code=404, detail="Mission not found")
+    return mission
+@app.patch("/missions/{mission_id}")
+def missions_update(mission_id: str, changes: dict[str, object]) -> dict[str, object]:
+    try: return update_mission(mission_id, **changes)
+    except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
+@app.post("/missions/{mission_id}/transition")
+def missions_transition(mission_id: str, request: dict[str, object]) -> dict[str, object]:
+    try: return transition(mission_id, str(request.get("state", "PLANNING")), reason=str(request.get("reason")) if request.get("reason") else None)
+    except KeyError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
+@app.get("/missions/{mission_id}/memory")
+def missions_memory(mission_id: str) -> dict[str, object]:
+    mission = get_mission(mission_id)
+    if not mission: raise HTTPException(status_code=404, detail="Mission not found")
+    return {"mission": mission, "audit": mission_summary(mission_id)}
+@app.get("/corporate-memory")
+def corporate_memory(keyword: str | None = None, limit: int = 20) -> dict[str, object]: return {"missions": recent_memory(objective_keyword=keyword, limit=limit)}
+@app.get("/corporate-memory/snapshot")
+def corporate_memory_snapshot() -> dict[str, object]: return memory_snapshot()
+
 @app.get("/audit/events")
 def audit_events(mission_id: str | None = None, task_id: str | None = None, limit: int = 100) -> dict[str, object]: return {"events": list_events(mission_id=mission_id, task_id=task_id, limit=limit)}
 @app.get("/audit/missions/{mission_id}")
 def audit_mission(mission_id: str) -> dict[str, object]: return mission_summary(mission_id)
-
 @app.post("/collaboration/plan", response_model=CollaborationDecision)
 def collaboration_plan(request: PromptRequest) -> CollaborationDecision:
     analysis = analyze_prompt(request.prompt); task_type = analysis.task_types[0] if analysis.task_types else "general_reasoning"; return plan_collaboration(task_type, request.prompt, free_only=settings.free_only)
