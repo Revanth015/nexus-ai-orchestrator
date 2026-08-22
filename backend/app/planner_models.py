@@ -13,6 +13,7 @@ class PlanTask(BaseModel):
     outputs: list[str] = Field(default_factory=list)
     preferred_worker_types: list[str] = Field(default_factory=list)
     quality_gate: bool = False
+    sprint: int = 1
 
 
 class TaskPlan(BaseModel):
@@ -20,7 +21,7 @@ class TaskPlan(BaseModel):
     tasks: list[PlanTask] = Field(default_factory=list)
     execution_order: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
-    planner: str = "local_graph_v1"
+    planner: str = "local_graph_v2_agile"
 
 
 class PlanResponse(BaseModel):
