@@ -9,7 +9,7 @@ from .planner_models import PlanResponse
 from .prompt_analyzer import analyze_prompt
 from .prompt_models import PromptAnalysisResponse, PromptRequest
 from .task_planner import build_task_plan
-from .worker_learning import learning_snapshot, self_initialize
+from .worker_learning import learning_snapshot, self_initialize, run_self_initialization
 from .worker_registry import list_workers
 from .worker_router import WorkerRouteResponse, route_task
 
@@ -50,6 +50,13 @@ def workers_learning() -> dict[str, object]:
 @app.post("/workers/self-initialize")
 def workers_self_initialize() -> dict[str, object]:
     return self_initialize()
+
+@app.post("/workers/self-initialize/run")
+def workers_self_initialize_run() -> dict[str, object]:
+    try:
+        return run_self_initialization()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Worker self-initialization failed: {exc}") from exc
 
 @app.get("/route/{task_type}", response_model=WorkerRouteResponse)
 def route(task_type: str) -> WorkerRouteResponse:
