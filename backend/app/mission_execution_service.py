@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from .audit_log import decision_record, record_event
 from .execution import MissionExecutionRequest, MissionExecutionResponse, execute_mission as run_mission
 from .mission_memory import add_artifact, add_collaboration, add_decision, add_qa_finding, add_task, complete_mission, create_mission, consume_reserved_resources, release_reserved_resources, reserve_resources, transition, update_mission, get_mission
+
+logger = logging.getLogger("nexus.mission")
 
 
 def execute_mission_with_memory(request: MissionExecutionRequest, *, free_only: bool = True) -> MissionExecutionResponse:
@@ -25,7 +29,10 @@ def execute_mission_with_memory(request: MissionExecutionRequest, *, free_only: 
 
     try:
         result = run_mission(request, free_only=free_only, state_callback=sync_state)
+        logger.info("Mission %s completed execution cycle: status=%s manager_decision=%s tasks=%d reworks=%d", mission_id, result.status, result.manager_decision, len(result.tasks), result.rework_count)
         for task in result.tasks:
+            if task.status in {"failed", "blocked"}:
+                logger.error("Mission %s task failed: task_id=%s task_type=%s worker=%s status=%s error=%s", mission_id, task.task_id, task.task_type, task.worker_id, task.status, task.error)
             add_task(mission_id, task.model_dump(mode="json"))
             if task.worker_id:
                 current = list((get_mission(mission_id) or {}).get("active_workers", []))
@@ -91,6 +98,7 @@ def execute_mission_with_memory(request: MissionExecutionRequest, *, free_only: 
             record_event("mission_ended", mission_id=mission_id, data={"status": result.status, "manager_decision": result.manager_decision, "rework_count": result.rework_count, "final_quality": final_quality})
         return result
     except Exception as exc:
+        logger.exception("Mission %s crashed outside task-level failure handling: %s", mission_id, exc)
         transition(mission_id, "FAILED", reason=str(exc))
         record_event("mission_failed", mission_id=mission_id, data={"error": str(exc)})
         raise
