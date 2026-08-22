@@ -1,176 +1,38 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Activity, BrainCircuit, CheckCircle2, CircleDot, Paperclip, RefreshCw, Send, Users, X, ClipboardCheck } from "lucide-react";
+import { Activity, BrainCircuit, CheckCircle2, CircleDot, Paperclip, RefreshCw, Send, Users, X, ClipboardCheck, Plus, KeyRound, Trash2, PlugZap } from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 const stateClass = (state = "PLANNING") => `mission-state state-${state.toLowerCase()}`;
-
-const assessmentEntries = (result) => {
-  if (!result) return [];
-  if (Array.isArray(result.workers)) return result.workers;
-  if (Array.isArray(result.results)) return result.results;
-  if (Array.isArray(result.assessments)) return result.assessments;
-  if (Array.isArray(result.worker_results)) return result.worker_results;
-  return [];
-};
-
-const assessmentMetric = (entry, key, fallback = null) => {
-  if (entry?.[key] != null) return entry[key];
-  if (entry?.metrics?.[key] != null) return entry.metrics[key];
-  if (entry?.summary?.[key] != null) return entry.summary[key];
-  return fallback;
-};
+const assessmentEntries = (result) => !result ? [] : Array.isArray(result.workers) ? result.workers : Array.isArray(result.results) ? result.results : Array.isArray(result.assessments) ? result.assessments : Array.isArray(result.worker_results) ? result.worker_results : [];
+const assessmentMetric = (entry,key,fallback=null) => entry?.[key] != null ? entry[key] : entry?.metrics?.[key] != null ? entry.metrics[key] : entry?.summary?.[key] != null ? entry.summary[key] : fallback;
 
 export default function ManagerDashboard() {
-  const [prompt, setPrompt] = useState("");
-  const [status, setStatus] = useState("checking");
-  const [mission, setMission] = useState(null);
-  const [execution, setExecution] = useState(null);
-  const [workers, setWorkers] = useState([]);
-  const [memory, setMemory] = useState([]);
-  const [uploadedFiles, setUploadedFiles] = useState([]);
-  const [error, setError] = useState("");
-  const [running, setRunning] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [assessment, setAssessment] = useState(null);
-  const [assessmentBusy, setAssessmentBusy] = useState(false);
-  const [assessmentMode, setAssessmentMode] = useState("prepare");
-  const fileInputRef = useRef(null);
-
-  const load = async () => {
-    try {
-      const healthResponse = await fetch(`${API_BASE}/health`);
-      if (!healthResponse.ok) throw new Error("Backend unavailable");
-      setStatus("ready");
-      const [workerResponse, memoryResponse] = await Promise.allSettled([
-        fetch(`${API_BASE}/workers`),
-        fetch(`${API_BASE}/corporate-memory?limit=8`),
-      ]);
-      if (workerResponse.status === "fulfilled" && workerResponse.value.ok) setWorkers((await workerResponse.value.json()).workers ?? []);
-      if (memoryResponse.status === "fulfilled" && memoryResponse.value.ok) setMemory((await memoryResponse.value.json()).missions ?? []);
-    } catch (e) {
-      setStatus("offline");
-      setError(e.message || "Unable to connect to NEXUS");
-    }
-  };
-
-  useEffect(() => { load(); }, []);
-
-  const runAssessment = async (run = false) => {
-    if (assessmentBusy) return;
-    setAssessmentBusy(true); setError("");
-    try {
-      const endpoint = run ? "/workers/self-initialize/run" : "/workers/self-initialize";
-      const response = await fetch(`${API_BASE}${endpoint}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.detail || `Self assessment failed (${response.status})`);
-      setAssessment(result);
-      setAssessmentMode(run ? "results" : "prepared");
-      await load();
-    } catch (e) {
-      setError(e.message || "Self assessment failed");
-    } finally {
-      setAssessmentBusy(false);
-    }
-  };
-
-  const uploadFiles = async (files) => {
-    if (!files?.length) return;
-    setUploading(true); setError("");
-    try {
-      for (const file of Array.from(files)) {
-        const formData = new FormData(); formData.append("file", file);
-        const response = await fetch(`${API_BASE}/files/upload`, { method: "POST", body: formData });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.detail || `Upload failed (${response.status})`);
-        setUploadedFiles(current => [...current, result.file]);
-      }
-    } catch (e) { setError(e.message || "File upload failed"); }
-    finally { setUploading(false); if (fileInputRef.current) fileInputRef.current.value = ""; }
-  };
-
-  const removeFile = (fileId) => setUploadedFiles(current => current.filter(file => file.file_id !== fileId));
-
-  const runMission = async (event) => {
-    event.preventDefault();
-    const objective = prompt.trim();
-    if (!objective || running || uploading) return;
-    setRunning(true); setError(""); setExecution(null); setMission({ objective, state: "PLANNING", tasks: [], active_workers: [], rework_count: 0, max_reworks: 3 });
-    try {
-      const response = await fetch(`${API_BASE}/execute-mission`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: objective, file_ids: uploadedFiles.map(file => file.file_id) }) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.detail || `Mission failed (${response.status})`);
-      setExecution(result);
-      setMission({ objective: result.objective, state: result.status === "completed" ? "COMPLETED" : result.status === "rework_limit_reached" ? "REWORK_LIMIT_REACHED" : "MANAGER_REVIEW", tasks: result.tasks ?? [], active_workers: [...new Set((result.tasks ?? []).map(t => t.worker_name).filter(Boolean))], rework_count: result.rework_count ?? 0, max_reworks: result.max_reworks ?? 3 });
-      setUploadedFiles([]); await load();
-    } catch (e) { setError(e.message || "Mission execution failed"); }
-    finally { setRunning(false); }
-  };
-
-  const completed = execution?.tasks?.filter(t => ["completed", "reviewed"].includes(t.status)).length ?? 0;
-  const total = execution?.tasks?.length ?? 0;
-  const workersUsed = mission?.active_workers?.length ?? 0;
-  const assessmentWorkers = assessmentEntries(assessment);
-  const assessmentIsComplete = assessment?.status === "completed" || assessmentMode === "results";
-
-  return (
-    <main className="manager-shell">
-      <header className="manager-header">
-        <div className="manager-brand"><span className="manager-logo"><BrainCircuit size={21} /></span><div><div className="manager-title">NEXUS</div><div className="manager-subtitle">AI CORPORATE MANAGER</div></div></div>
-        <div className="manager-status"><span className={`dot ${status === "ready" ? "ready" : status === "offline" ? "offline" : ""}`} /> {status === "ready" ? "Manager online" : status === "offline" ? "Backend offline" : "Connecting"}<button className="manager-refresh" onClick={load} title="Refresh"><RefreshCw size={15} /></button></div>
-      </header>
-
-      <div className="manager-grid">
-        <section className="manager-main">
-          <div className="manager-hero"><span className="eyebrow">CEO COMMAND CENTER</span><h1>What should NEXUS accomplish?</h1><p>The Manager decomposes your objective, allocates AI employees by task-specific evidence, coordinates collaboration, sends work through independent QA, records rework problems and makes the final acceptance decision.</p></div>
-          <form className="manager-command" onSubmit={runMission}>
-            <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={4} placeholder="Give NEXUS the business outcome, not the individual steps..." />
-            {uploadedFiles.length > 0 && <div className="uploaded-files">{uploadedFiles.map(file => <div className="uploaded-file" key={file.file_id}><span>{file.filename} · {Math.round(file.size_bytes / 1024)} KB</span><button type="button" onClick={() => removeFile(file.file_id)} aria-label={`Remove ${file.filename}`}><X size={14} /></button></div>)}</div>}
-            <div className="manager-command-footer"><input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xlsm,.pdf,.txt" multiple hidden onChange={e => uploadFiles(e.target.files)} /><button type="button" className="attach-button" onClick={() => fileInputRef.current?.click()} disabled={uploading || running}><Paperclip size={16} /> {uploading ? "Uploading..." : "Attach files"}</button><span>{uploadedFiles.length ? `${uploadedFiles.length} file(s) attached` : "CSV · XLSX · XLSM · PDF · TXT"}</span><button disabled={!prompt.trim() || running || uploading}><Send size={16} /> {running ? "Manager executing..." : "Start mission"}</button></div>
-          </form>
-          {error && <div className="error-card">{error}</div>}
-
-          <section className="manager-card assessment-card">
-            <div className="manager-card-head"><div><span className="eyebrow">WORKFORCE ONBOARDING</span><h2>AI self assessment</h2></div><ClipboardCheck size={18} /></div>
-            <p className="assessment-description">Run NEXUS's task-specific capability benchmarks before live allocation. New employees receive capability priors; existing employees keep their historical task evidence.</p>
-            <div className="assessment-actions">
-              <button type="button" className="assessment-button" disabled={assessmentBusy} onClick={() => runAssessment(false)}><ClipboardCheck size={15} /> {assessmentBusy && assessmentMode === "prepare" ? "Preparing..." : "Prepare assessment"}</button>
-              <button type="button" className="assessment-button primary" disabled={assessmentBusy || assessmentMode !== "prepared"} onClick={() => runAssessment(true)}><Activity size={15} /> {assessmentBusy && assessmentMode === "prepared" ? "Running benchmarks..." : "Run self assessment"}</button>
-            </div>
-            {assessment && <div className="assessment-results">
-              <div className={`assessment-summary ${assessmentIsComplete ? "complete" : "ready"}`}><div><strong>{assessmentIsComplete ? "Assessment completed" : "Benchmark plan ready"}</strong><span>{assessment.policy ?? "New workers get benchmarks; existing worker history is preserved."}</span></div><span className="assessment-count">{assessmentWorkers.length} workers</span></div>
-              {assessmentWorkers.length === 0 && <div className="assessment-empty">No worker result records were returned by the assessment endpoint.</div>}
-              {assessmentWorkers.map((w) => {
-                const testsCompleted = assessmentMetric(w, "tests_completed", 0);
-                const testsTotal = assessmentMetric(w, "tests_total", null);
-                const score = assessmentMetric(w, "overall_score", assessmentMetric(w, "score", null));
-                const confidence = assessmentMetric(w, "confidence", null);
-                const observations = assessmentMetric(w, "observations", 0);
-                const action = w.action ?? w.status ?? "assessed";
-                const skipped = String(action).includes("skipped") || String(w.status ?? "").includes("skipped");
-                return <div className="assessment-worker" key={w.worker_id ?? w.id ?? Math.random()}>
-                  <div className="assessment-worker-main"><div className="assessment-worker-title"><strong>{w.worker_id ?? w.id ?? "Unknown worker"}</strong><span className={`assessment-state ${skipped ? "skipped" : assessmentIsComplete ? "done" : "ready"}`}>{skipped ? "SKIPPED" : assessmentIsComplete ? "ASSESSED" : "READY"}</span></div><small>{w.reason ?? action}</small></div>
-                  <div className="assessment-stats"><span>Observations <b>{observations}</b></span><span>Tests <b>{testsCompleted}{testsTotal != null ? `/${testsTotal}` : ""}</b></span>{score != null && <span>Score <b>{score}</b></span>}{confidence != null && <span>Confidence <b>{confidence}</b></span>}</div>
-                </div>;
-              })}
-            </div>}
-          </section>
-
-          {mission && <section className="manager-card">
-            <div className="manager-card-head"><div><span className="eyebrow">ACTIVE MISSION</span><h2>{mission.objective}</h2></div><span className={stateClass(mission.state)}>{mission.state}</span></div>
-            <div className="manager-metrics"><div><strong>{completed}/{total}</strong><small>Tasks completed</small></div><div><strong>{workersUsed}</strong><small>AI employees used</small></div><div><strong>{mission.rework_count}/{mission.max_reworks}</strong><small>Reworks</small></div><div><strong>{execution?.manager_decision ?? "PLANNING"}</strong><small>Manager decision</small></div></div>
-            <div className="sprint-line"><span>Sprint 1</span><span>→</span><span>Plan</span><span>→</span><span>Allocate</span><span>→</span><span>Execute</span><span>→</span><span>QA</span><span>→</span><span>Manager review</span></div>
-            {execution?.tasks?.length > 0 && <div className="manager-task-board">{execution.tasks.map((task, i) => <div className="manager-task" key={`${task.task_id}-${i}`}><div className="task-icon">{task.status === "completed" || task.status === "reviewed" ? <CheckCircle2 size={17} /> : <CircleDot size={17} />}</div><div className="task-copy"><strong>{task.title}</strong><small>{task.task_type} · {task.status} · Sprint {task.sprint ?? 1}</small>{task.worker_name && <small>Employee: {task.worker_name} · route score {task.route_score ?? "—"}</small>}{task.rework_problem && <small className="rework-note">Rework problem: {task.rework_problem}</small>}{task.quality_decision && <small>QA: {task.quality_decision} · Manager: {task.manager_decision ?? "pending"}</small>}{task.error && <small className="rework-note">Execution error: {task.error}</small>}</div><span className={`task-status ${task.status}`}>{task.status}</span></div>)}</div>}
-          </section>}
-
-          {execution?.artifacts?.length > 0 && <section className="manager-card"><div className="manager-card-head"><div><span className="eyebrow">DELIVERABLES</span><h2>Employee outputs</h2></div><span className="manager-count">{execution.artifacts.length}</span></div>{execution.artifacts.map(a => <details className="manager-artifact" key={a.artifact_id}><summary><strong>{a.name}</strong><span>{a.artifact_type} · {a.size_chars} chars</span></summary><pre>{a.content}</pre></details>)}</section>}
-        </section>
-
-        <aside className="manager-side">
-          <section className="manager-card"><div className="manager-card-head"><div><span className="eyebrow">WORKFORCE</span><h2>AI employees</h2></div><Users size={17} /></div><div className="employee-list">{workers.map(w => <div className="employee" key={w.worker_id}><div className="employee-icon"><Activity size={15} /></div><div><strong>{w.name ?? w.worker_id}</strong><small>{w.worker_id} · {w.resource?.free_status ?? "registered"}</small></div><span className={w.metadata?.execution_ready ? "employee-ready" : "employee-idle"}>{w.metadata?.execution_ready ? "READY" : "OFFLINE"}</span></div>)}{workers.length === 0 && <div className="muted">No worker registry data yet.</div>}</div></section>
-          <section className="manager-card"><div className="manager-card-head"><div><span className="eyebrow">CORPORATE MEMORY</span><h2>Previous missions</h2></div></div>{memory.length === 0 ? <div className="muted">No completed missions stored yet.</div> : <div className="memory-list">{memory.map(m => <div className="memory-item" key={m.mission_id}><strong>{m.objective}</strong><small>{m.task_count} tasks · {m.worker_count} employees · {m.rework_count} reworks</small><small>{m.final_decision} · quality {m.final_quality ?? "—"}</small></div>)}</div>}</section>
-          <section className="manager-card manager-principles"><span className="eyebrow">MANAGER RULES</span><div>• Task-specific capability, not fixed roles</div><div>• Existing employees retain historical performance</div><div>• New employees enter through self-initialization</div><div>• QA employees are independent from the producer</div><div>• Every rework records the exact problem</div><div>• Maximum 3 reworks before escalation</div><div>• Manager owns final acceptance</div></section>
-        </aside>
-      </div>
-    </main>
-  );
+  const [prompt,setPrompt]=useState(""); const [status,setStatus]=useState("checking"); const [mission,setMission]=useState(null); const [execution,setExecution]=useState(null); const [workers,setWorkers]=useState([]); const [memory,setMemory]=useState([]); const [uploadedFiles,setUploadedFiles]=useState([]); const [error,setError]=useState(""); const [running,setRunning]=useState(false); const [uploading,setUploading]=useState(false); const [assessment,setAssessment]=useState(null); const [assessmentBusy,setAssessmentBusy]=useState(false); const [assessmentMode,setAssessmentMode]=useState("prepare"); const [showAddAI,setShowAddAI]=useState(false); const [aiBusy,setAiBusy]=useState(false); const [aiMessage,setAiMessage]=useState("");
+  const [aiForm,setAiForm]=useState({name:"",provider:"OpenAI-compatible",api_key:"",model:"",base_url:"",free_verified:false}); const fileInputRef=useRef(null);
+  const load=async()=>{try{const h=await fetch(`${API_BASE}/health`);if(!h.ok)throw new Error("Backend unavailable");setStatus("ready");const [wr,mr]=await Promise.allSettled([fetch(`${API_BASE}/workers`),fetch(`${API_BASE}/corporate-memory?limit=8`)]);if(wr.status==="fulfilled"&&wr.value.ok)setWorkers((await wr.value.json()).workers??[]);if(mr.status==="fulfilled"&&mr.value.ok)setMemory((await mr.value.json()).missions??[]);}catch(e){setStatus("offline");setError(e.message||"Unable to connect to NEXUS")}};
+  useEffect(()=>{load()},[]);
+  const runAssessment=async(run=false)=>{if(assessmentBusy)return;setAssessmentBusy(true);setError("");try{const r=await fetch(`${API_BASE}${run?"/workers/self-initialize/run":"/workers/self-initialize"}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})});const result=await r.json();if(!r.ok)throw new Error(result.detail||`Self assessment failed (${r.status})`);setAssessment(result);setAssessmentMode(run?"results":"prepared");await load()}catch(e){setError(e.message||"Self assessment failed")}finally{setAssessmentBusy(false)}};
+  const addAI=async(e)=>{e.preventDefault();if(aiBusy)return;setAiBusy(true);setAiMessage("");setError("");try{const r=await fetch(`${API_BASE}/workers/connections`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(aiForm)});const result=await r.json();if(!r.ok)throw new Error(result.detail||`Could not add AI (${r.status})`);setAiMessage(`${result.worker?.name||aiForm.name} added to the workspace.`);setAiForm({name:"",provider:"OpenAI-compatible",api_key:"",model:"",base_url:"",free_verified:false});await load();setTimeout(()=>setShowAddAI(false),700)}catch(e){setAiMessage(e.message||"Could not add AI")}finally{setAiBusy(false)}};
+  const removeAI=async(worker)=>{if(!worker?.metadata?.custom)return;if(!window.confirm(`Remove ${worker.name} from NEXUS?`))return;try{const r=await fetch(`${API_BASE}/workers/connections/${worker.worker_id}`,{method:"DELETE"});if(!r.ok){const x=await r.json();throw new Error(x.detail||"Remove failed")}await load()}catch(e){setError(e.message||"Could not remove AI")}};
+  const testAI=async(worker)=>{setAiMessage(`Testing ${worker.name}...`);try{const r=await fetch(`${API_BASE}/workers/connections/${worker.worker_id}/test`,{method:"POST"});const x=await r.json();if(!r.ok)throw new Error(x.detail||"Connection test failed");setAiMessage(`${worker.name} connection is working.`);await load()}catch(e){setAiMessage(e.message||"Connection test failed")}};
+  const uploadFiles=async(files)=>{if(!files?.length)return;setUploading(true);setError("");try{for(const file of Array.from(files)){const fd=new FormData();fd.append("file",file);const r=await fetch(`${API_BASE}/files/upload`,{method:"POST",body:fd});const x=await r.json();if(!r.ok)throw new Error(x.detail||`Upload failed (${r.status})`);setUploadedFiles(c=>[...c,x.file])}}catch(e){setError(e.message||"File upload failed")}finally{setUploading(false);if(fileInputRef.current)fileInputRef.current.value=""}};
+  const removeFile=id=>setUploadedFiles(c=>c.filter(f=>f.file_id!==id));
+  const runMission=async(e)=>{e.preventDefault();const objective=prompt.trim();if(!objective||running||uploading)return;setRunning(true);setError("");setExecution(null);setMission({objective,state:"PLANNING",tasks:[],active_workers:[],rework_count:0,max_reworks:3});try{const r=await fetch(`${API_BASE}/execute-mission`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:objective,file_ids:uploadedFiles.map(f=>f.file_id)})});const x=await r.json();if(!r.ok)throw new Error(x.detail||`Mission failed (${r.status})`);setExecution(x);setMission({objective:x.objective,state:x.status==="completed"?"COMPLETED":x.status==="rework_limit_reached"?"REWORK_LIMIT_REACHED":"MANAGER_REVIEW",tasks:x.tasks??[],active_workers:[...new Set((x.tasks??[]).map(t=>t.worker_name).filter(Boolean))],rework_count:x.rework_count??0,max_reworks:x.max_reworks??3});setUploadedFiles([]);await load()}catch(e){setError(e.message||"Mission execution failed")}finally{setRunning(false)}};
+  const completed=execution?.tasks?.filter(t=>["completed","reviewed"].includes(t.status)).length??0;const total=execution?.tasks?.length??0;const workersUsed=mission?.active_workers?.length??0;const assessmentWorkers=assessmentEntries(assessment);const assessmentIsComplete=assessment?.status==="completed"||assessmentMode==="results";
+  return <main className="manager-shell">
+    <header className="manager-header"><div className="manager-brand"><span className="manager-logo"><BrainCircuit size={21}/></span><div><div className="manager-title">NEXUS</div><div className="manager-subtitle">AI CORPORATE MANAGER</div></div></div><div className="manager-status"><span className={`dot ${status==="ready"?"ready":status==="offline"?"offline":""}`}/>{status==="ready"?"Manager online":status==="offline"?"Backend offline":"Connecting"}<button className="manager-refresh" onClick={load} title="Refresh"><RefreshCw size={15}/></button></div></header>
+    <div className="manager-grid"><section className="manager-main">
+      <div className="manager-hero"><span className="eyebrow">CEO COMMAND CENTER</span><h1>What should NEXUS accomplish?</h1><p>The Manager decomposes your objective, allocates AI employees by task-specific evidence, coordinates collaboration, sends work through independent QA, records rework problems and makes the final acceptance decision.</p></div>
+      <form className="manager-command" onSubmit={runMission}><textarea value={prompt} onChange={e=>setPrompt(e.target.value)} rows={4} placeholder="Give NEXUS the business outcome, not the individual steps..."/>{uploadedFiles.length>0&&<div className="uploaded-files">{uploadedFiles.map(file=><div className="uploaded-file" key={file.file_id}><span>{file.filename} · {Math.round(file.size_bytes/1024)} KB</span><button type="button" onClick={()=>removeFile(file.file_id)}><X size={14}/></button></div>)}</div>}<div className="manager-command-footer"><input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xlsm,.pdf,.txt" multiple hidden onChange={e=>uploadFiles(e.target.files)}/><button type="button" className="attach-button" onClick={()=>fileInputRef.current?.click()} disabled={uploading||running}><Paperclip size={16}/>{uploading?"Uploading...":"Attach files"}</button><span>{uploadedFiles.length?`${uploadedFiles.length} file(s) attached`:"CSV · XLSX · XLSM · PDF · TXT"}</span><button disabled={!prompt.trim()||running||uploading}><Send size={16}/>{running?"Manager executing...":"Start mission"}</button></div></form>
+      {error&&<div className="error-card">{error}</div>}
+      <section className="manager-card assessment-card"><div className="manager-card-head"><div><span className="eyebrow">WORKFORCE ONBOARDING</span><h2>AI self assessment</h2></div><ClipboardCheck size={18}/></div><p className="assessment-description">Run NEXUS's task-specific capability benchmarks before live allocation. New employees receive capability priors; existing employees keep their historical task evidence.</p><div className="assessment-actions"><button type="button" className="assessment-button" disabled={assessmentBusy} onClick={()=>runAssessment(false)}><ClipboardCheck size={15}/>{assessmentBusy&&assessmentMode==="prepare"?"Preparing...":"Prepare assessment"}</button><button type="button" className="assessment-button primary" disabled={assessmentBusy||assessmentMode!=="prepared"} onClick={()=>runAssessment(true)}><Activity size={15}/>{assessmentBusy&&assessmentMode==="prepared"?"Running benchmarks...":"Run self assessment"}</button></div>{assessment&&<div className="assessment-results"><div className={`assessment-summary ${assessmentIsComplete?"complete":"ready"}`}><div><strong>{assessmentIsComplete?"Assessment completed":"Benchmark plan ready"}</strong><span>{assessment.policy??"New workers get benchmarks; existing worker history is preserved."}</span></div><span className="assessment-count">{assessmentWorkers.length} workers</span></div>{assessmentWorkers.length===0&&<div className="assessment-empty">No worker result records were returned by the assessment endpoint.</div>}{assessmentWorkers.map(w=>{const tc=assessmentMetric(w,"tests_completed",0),tt=assessmentMetric(w,"tests_total",null),score=assessmentMetric(w,"overall_score",assessmentMetric(w,"score",null)),confidence=assessmentMetric(w,"confidence",null),obs=assessmentMetric(w,"observations",0),action=w.action??w.status??"assessed",skipped=String(action).includes("skipped")||String(w.status??"").includes("skipped");return <div className="assessment-worker" key={w.worker_id??w.id??Math.random()}><div><div className="assessment-worker-title"><strong>{w.worker_id??w.id??"Unknown worker"}</strong><span className={`assessment-state ${skipped?"skipped":assessmentIsComplete?"done":"ready"}`}>{skipped?"SKIPPED":assessmentIsComplete?"ASSESSED":"READY"}</span></div><small>{w.reason??action}</small></div><div className="assessment-stats"><span>Observations <b>{obs}</b></span><span>Tests <b>{tc}{tt!=null?`/${tt}`:""}</b></span>{score!=null&&<span>Score <b>{score}</b></span>}{confidence!=null&&<span>Confidence <b>{confidence}</b></span>}</div></div>})}</div>}</section>
+      {mission&&<section className="manager-card"><div className="manager-card-head"><div><span className="eyebrow">ACTIVE MISSION</span><h2>{mission.objective}</h2></div><span className={stateClass(mission.state)}>{mission.state}</span></div><div className="manager-metrics"><div><strong>{completed}/{total}</strong><small>Tasks completed</small></div><div><strong>{workersUsed}</strong><small>AI employees used</small></div><div><strong>{mission.rework_count}/{mission.max_reworks}</strong><small>Reworks</small></div><div><strong>{execution?.manager_decision??"PLANNING"}</strong><small>Manager decision</small></div></div><div className="sprint-line"><span>Sprint 1</span><span>→</span><span>Plan</span><span>→</span><span>Allocate</span><span>→</span><span>Execute</span><span>→</span><span>QA</span><span>→</span><span>Manager review</span></div>{execution?.tasks?.length>0&&<div className="manager-task-board">{execution.tasks.map((task,i)=><div className="manager-task" key={`${task.task_id}-${i}`}><div className="task-icon">{task.status==="completed"||task.status==="reviewed"?<CheckCircle2 size={17}/>:<CircleDot size={17}/>}</div><div className="task-copy"><strong>{task.title}</strong><small>{task.task_type} · {task.status} · Sprint {task.sprint??1}</small>{task.worker_name&&<small>Employee: {task.worker_name} · route score {task.route_score??"—"}</small>}{task.rework_problem&&<small className="rework-note">Rework problem: {task.rework_problem}</small>}{task.quality_decision&&<small>QA: {task.quality_decision} · Manager: {task.manager_decision??"pending"}</small>}{task.error&&<small className="rework-note">Execution error: {task.error}</small>}</div><span className={`task-status ${task.status}`}>{task.status}</span></div>)}</div>}</section>}
+      {execution?.artifacts?.length>0&&<section className="manager-card"><div className="manager-card-head"><div><span className="eyebrow">DELIVERABLES</span><h2>Employee outputs</h2></div><span className="manager-count">{execution.artifacts.length}</span></div>{execution.artifacts.map(a=><details className="manager-artifact" key={a.artifact_id}><summary><strong>{a.name}</strong><span>{a.artifact_type} · {a.size_chars} chars</span></summary><pre>{a.content}</pre></details>)}</section>}
+    </section><aside className="manager-side">
+      <section className="manager-card workforce-card"><div className="manager-card-head"><div><span className="eyebrow">WORKFORCE</span><h2>AI employees</h2></div><button className="add-ai-button" onClick={()=>{setAiMessage("");setShowAddAI(true)}} title="Add AI employee"><Plus size={16}/><span>Add AI</span></button></div><div className="employee-list">{workers.map(w=><div className="employee" key={w.worker_id}><div className="employee-icon"><Activity size={15}/></div><div><strong>{w.name??w.worker_id}</strong><small>{w.worker_id} · {w.resource?.free_status??"registered"}</small></div><div className="employee-actions"><span className={w.metadata?.execution_ready?"employee-ready":"employee-idle"}>{w.metadata?.execution_ready?"READY":"OFFLINE"}</span>{w.metadata?.custom&&<><button onClick={()=>testAI(w)} title="Test connection"><PlugZap size={12}/></button><button onClick={()=>removeAI(w)} title="Remove AI"><Trash2 size={12}/></button></>}</div></div>)}{workers.length===0&&<div className="muted">No worker registry data yet.</div>}</div></section>
+      <section className="manager-card"><div className="manager-card-head"><div><span className="eyebrow">CORPORATE MEMORY</span><h2>Previous missions</h2></div></div>{memory.length===0?<div className="muted">No completed missions stored yet.</div>:<div className="memory-list">{memory.map(m=><div className="memory-item" key={m.mission_id}><strong>{m.objective}</strong><small>{m.task_count} tasks · {m.worker_count} employees · {m.rework_count} reworks</small><small>{m.final_decision} · quality {m.final_quality??"—"}</small></div>)}</div>}</section>
+      <section className="manager-card manager-principles"><span className="eyebrow">MANAGER RULES</span><div>• Task-specific capability, not fixed roles</div><div>• Existing employees retain historical performance</div><div>• New employees enter through self-initialization</div><div>• QA employees are independent from the producer</div><div>• Every rework records the exact problem</div><div>• Maximum 3 reworks before escalation</div><div>• Manager owns final acceptance</div></section>
+    </aside></div>
+    {showAddAI&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setShowAddAI(false)}}><form className="add-ai-modal" onSubmit={addAI}><div className="add-ai-head"><div><span className="eyebrow">WORKFORCE MANAGEMENT</span><h2>Add AI employee</h2><p>Connect an OpenAI-compatible AI provider. Credentials stay local to this NEXUS installation.</p></div><button type="button" onClick={()=>setShowAddAI(false)}><X size={17}/></button></div><label>Employee name<input required value={aiForm.name} onChange={e=>setAiForm({...aiForm,name:e.target.value})} placeholder="e.g. DeepSeek Researcher"/></label><label>Provider<input required value={aiForm.provider} onChange={e=>setAiForm({...aiForm,provider:e.target.value})} placeholder="e.g. DeepSeek, OpenRouter, Groq"/></label><label>API key<input required type="password" value={aiForm.api_key} onChange={e=>setAiForm({...aiForm,api_key:e.target.value})} placeholder="Paste API key" autoComplete="off"/></label><div className="add-ai-row"><label>Model<input required value={aiForm.model} onChange={e=>setAiForm({...aiForm,model:e.target.value})} placeholder="e.g. deepseek-chat"/></label><label>Base URL<input required value={aiForm.base_url} onChange={e=>setAiForm({...aiForm,base_url:e.target.value})} placeholder="https://.../v1"/></label></div><label className="checkbox-line"><input type="checkbox" checked={aiForm.free_verified} onChange={e=>setAiForm({...aiForm,free_verified:e.target.checked})}/><span>I have verified this provider/model is free for NEXUS use</span></label><div className="add-ai-note"><KeyRound size={14}/> API keys are stored in a local ignored file and are never returned by the API or committed to Git.</div>{aiMessage&&<div className="ai-message">{aiMessage}</div>}<div className="add-ai-actions"><button type="button" className="assessment-button" onClick={()=>setShowAddAI(false)}>Cancel</button><button className="assessment-button primary" disabled={aiBusy}>{aiBusy?"Adding...":"Add employee"}</button></div></form></div>}
+  </main>;
 }
