@@ -9,7 +9,6 @@ from uuid import uuid4
 
 _STORE = Path(__file__).resolve().parent.parent / ".nexus_mission_memory.json"
 _LOCK = Lock()
-
 _STATES = {"PLANNING", "ALLOCATING", "EXECUTING", "COLLABORATING", "REVIEWING", "REWORKING", "MANAGER_REVIEW", "COMPLETED", "BLOCKED", "FAILED", "ESCALATED", "RESOURCE_EXHAUSTED", "REWORK_LIMIT_REACHED"}
 
 
@@ -30,7 +29,7 @@ def _save(data: dict[str, Any]) -> None:
 def create_mission(objective: str, *, success_criteria: list[str] | None = None, resource_budget: int = 12) -> dict[str, Any]:
     mission_id = f"mission-{uuid4().hex[:12]}"
     now = datetime.now(timezone.utc).isoformat()
-    mission = {"mission_id": mission_id, "objective": objective, "success_criteria": success_criteria or [], "state": "PLANNING", "sprint": 1, "current_task_id": None, "tasks": [], "active_workers": [], "artifacts": [], "decisions": [], "collaborations": [], "qa_findings": [], "rework_count": 0, "max_reworks": 3, "resource_budget": resource_budget, "resource_used": 0, "created_at": now, "updated_at": now}
+    mission = {"mission_id": mission_id, "objective": objective, "success_criteria": success_criteria or [], "state": "PLANNING", "sprint": 1, "current_task_id": None, "tasks": [], "active_workers": [], "artifacts": [], "decisions": [], "collaborations": [], "qa_findings": [], "rework_count": 0, "max_reworks": 3, "resource_budget": resource_budget, "resource_used": 0.0, "resource_reserved": 0.0, "created_at": now, "updated_at": now}
     with _LOCK:
         data = _load(); data["missions"][mission_id] = mission; _save(data)
     return mission
@@ -82,15 +81,39 @@ def add_collaboration(mission_id: str, collaboration: dict[str, Any]) -> dict[st
     return update_mission(mission_id, collaborations=items)
 
 
-def record_resource_use(mission_id: str, amount: int = 1) -> dict[str, Any]:
-    mission = get_mission(mission_id); used = int(mission.get("resource_used", 0)) + max(0, amount)
+def record_resource_use(mission_id: str, amount: float = 1.0) -> dict[str, Any]:
+    mission = get_mission(mission_id); used = float(mission.get("resource_used", 0)) + max(0.0, amount)
     return update_mission(mission_id, resource_used=used)
+
+
+def reserve_resources(mission_id: str, amount: float) -> dict[str, Any]:
+    mission = get_mission(mission_id)
+    if not mission: raise KeyError(f"Mission '{mission_id}' not found.")
+    amount = max(0.0, float(amount))
+    used = float(mission.get("resource_used", 0)); reserved = float(mission.get("resource_reserved", 0)); budget = float(mission.get("resource_budget", 0))
+    if used + reserved + amount > budget:
+        raise ValueError(f"Resource budget exceeded: required {amount:.1f}, available {max(0.0, budget-used-reserved):.1f}.")
+    return update_mission(mission_id, resource_reserved=reserved + amount)
+
+
+def consume_reserved_resources(mission_id: str, amount: float) -> dict[str, Any]:
+    mission = get_mission(mission_id)
+    if not mission: raise KeyError(f"Mission '{mission_id}' not found.")
+    amount = max(0.0, float(amount)); reserved = float(mission.get("resource_reserved", 0)); used = float(mission.get("resource_used", 0))
+    consumed = min(amount, reserved)
+    return update_mission(mission_id, resource_reserved=reserved-consumed, resource_used=used+consumed)
+
+
+def release_reserved_resources(mission_id: str, amount: float) -> dict[str, Any]:
+    mission = get_mission(mission_id)
+    if not mission: raise KeyError(f"Mission '{mission_id}' not found.")
+    reserved = float(mission.get("resource_reserved", 0)); return update_mission(mission_id, resource_reserved=max(0.0, reserved-max(0.0, float(amount))))
 
 
 def complete_mission(mission_id: str, *, final_decision: str, final_quality: float | None = None) -> dict[str, Any]:
     mission = get_mission(mission_id)
     if not mission: raise KeyError(f"Mission '{mission_id}' not found.")
-    summary = {"mission_id": mission_id, "objective": mission["objective"], "sprint": mission.get("sprint", 1), "task_count": len(mission.get("tasks", [])), "worker_count": len(set(mission.get("active_workers", []))), "collaboration_count": len(mission.get("collaborations", [])), "rework_count": mission.get("rework_count", 0), "resource_used": mission.get("resource_used", 0), "final_decision": final_decision, "final_quality": final_quality, "completed_at": datetime.now(timezone.utc).isoformat()}
+    summary = {"mission_id": mission_id, "objective": mission["objective"], "sprint": mission.get("sprint", 1), "task_count": len(mission.get("tasks", [])), "worker_count": len(set(mission.get("active_workers", []))), "collaboration_count": len(mission.get("collaborations", [])), "rework_count": mission.get("rework_count", 0), "resource_used": mission.get("resource_used", 0), "resource_reserved": mission.get("resource_reserved", 0), "final_decision": final_decision, "final_quality": final_quality, "completed_at": datetime.now(timezone.utc).isoformat()}
     with _LOCK:
         data = _load(); data["completed_memory"] = (data.get("completed_memory", []) + [summary])[-1000:]; _save(data)
     transition(mission_id, "COMPLETED", reason=f"Final Manager decision: {final_decision}")
