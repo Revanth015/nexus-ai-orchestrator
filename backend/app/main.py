@@ -49,7 +49,8 @@ def workers_self_initialize_run() -> dict[str, object]:
 @app.get("/route/{task_type}", response_model=WorkerRouteResponse)
 def route(task_type: str) -> WorkerRouteResponse: return route_task(task_type, free_only=settings.free_only)
 @app.post("/manager/decide/{task_type}", response_model=ManagerExecutionDecision)
-def manager_decide_endpoint(task_type: str) -> ManagerExecutionDecision: return decide_worker_for_task(task_type, free_only=settings.free_only)
+def manager_decide_endpoint(task_type: str, request: PromptRequest) -> ManagerExecutionDecision:
+    return decide_worker_for_task(task_type, prompt=request.prompt, free_only=settings.free_only)
 
 @app.post("/missions")
 def missions_create(request: PromptRequest) -> dict[str, object]: return {"status": "created", "mission": create_mission(request.prompt)}
