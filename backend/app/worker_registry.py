@@ -3,6 +3,7 @@ from __future__ import annotations
 from .ai_connectors import claude_status, perplexity_status
 from .gemini_connector import runtime_metadata as gemini_runtime_metadata
 from .models import CapabilityScores, CorporateRole, FreeStatus, ResourceState, WorkerProfile, WorkerType
+from .worker_learning import get_worker_learning
 
 
 _INITIAL_WORKERS = [
@@ -51,6 +52,16 @@ def list_workers() -> list[WorkerProfile]:
     for worker in workers:
         if worker.worker_id in {"gemini", "claude", "perplexity"}:
             _apply_ai_telemetry(worker)
+        learning = get_worker_learning(worker.worker_id)
+        if learning:
+            worker.metadata["observed_performance"] = {
+                "observations": learning.get("observations", 0),
+                "successes": learning.get("successes", 0),
+                "failures": learning.get("failures", 0),
+                "quality_passes": learning.get("quality_passes", 0),
+                "quality_reworks": learning.get("quality_reworks", 0),
+                "last_observed_at": learning.get("last_observed_at"),
+            }
     return workers
 
 
