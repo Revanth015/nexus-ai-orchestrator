@@ -57,6 +57,8 @@ class TaskExecutionRecord(BaseModel):
     quality_decision: str | None = None
     review_recommendation: str | None = None
     manager_decision: str | None = None
+    rework_number: int = 0
+    rework_problem: str | None = None
     sprint: int = 1
     error: str | None = None
 
@@ -66,6 +68,8 @@ class MissionExecutionResponse(BaseModel):
     objective: str
     execution_order: list[str]
     manager_decision: str
+    rework_count: int
+    max_reworks: int
     tasks: list[TaskExecutionRecord]
     artifacts: list[ArtifactRecord]
 
@@ -111,8 +115,15 @@ def _task_prompt(objective: str, title: str, task_type: str, inputs: list[str], 
         supplied = [f"{name}: {artifacts[name]}" for name in inputs if name in artifacts]
         if supplied:
             context = "\n\nPrevious task outputs:\n" + "\n\n".join(supplied)
-    feedback_text = f"\n\nQA feedback to address:\n{feedback}" if feedback else ""
-    role = "\n\nYou are the independent Quality Review Employee. Report your recommendation to the NEXUS Manager. You do not make the final acceptance decision." if task_type == "quality_review" else ""
+    feedback_text = f"\n\nQA problem to fix:\n{feedback}" if feedback else ""
+    if task_type == "quality_review":
+        role = (
+            "\n\nYou are the independent Quality Review Employee. Review the upstream employee output critically for factual accuracy, completeness, relevance, structure, consistency, and compliance with the task objective. "
+            "You must identify the specific problem if the work is not acceptable. Do not make the final acceptance decision. "
+            "End your review with these two explicit lines:\nProblem identified: <specific problem or 'None identified.'>\nRecommendation to NEXUS Manager: <PASS or REWORK>"
+        )
+    else:
+        role = ""
     return f"Mission objective:\n{objective}\n\nCurrent task: {title}\nTask type: {task_type}\nComplete only this task and produce a concise artifact for downstream employees.{role}{context}{feedback_text}"
 
 
@@ -124,24 +135,44 @@ def _review_recommendation(output: str) -> str | None:
     match = re.search(r"Recommendation to NEXUS Manager:\s*(PASS|REWORK)", output, re.IGNORECASE)
     if match:
         return match.group(1).upper()
-    # Backward compatibility with older quality employee output.
     return next((line.strip().upper() for line in reversed(output.splitlines()) if line.strip().upper() in {"PASS", "REWORK"}), None)
+
+
+def _review_problem(output: str) -> str | None:
+    match = re.search(r"Problem identified:\s*(.+)", output, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return None
 
 
 def _manager_decide(review_output: str) -> str:
     return "ACCEPT" if _review_recommendation(review_output) == "PASS" else "REWORK"
 
 
+def _mission_response(status: str, plan, execution_order, manager_decision: str, rework_count: int, records, artifacts) -> MissionExecutionResponse:
+    return MissionExecutionResponse(
+        status=status,
+        objective=plan.objective,
+        execution_order=execution_order,
+        manager_decision=manager_decision,
+        rework_count=rework_count,
+        max_reworks=3,
+        tasks=records,
+        artifacts=artifacts,
+    )
+
+
 def execute_mission(request: MissionExecutionRequest, *, free_only: bool = True) -> MissionExecutionResponse:
     analysis = analyze_prompt(request.prompt)
     plan = build_task_plan(analysis)
     artifacts_by_name: dict[str, str] = {}
+    rework_feedback_by_task: dict[str, str] = {}
     artifact_records: list[ArtifactRecord] = []
     records: list[TaskExecutionRecord] = []
     execution_order = list(plan.execution_order)
     task_by_id = {task.task_id: task for task in plan.tasks}
-    review_attempts = 0
-    max_rework_cycles = 2
+    rework_count = 0
+    max_reworks = 3
     index = 0
 
     while index < len(execution_order):
@@ -151,8 +182,15 @@ def execute_mission(request: MissionExecutionRequest, *, free_only: bool = True)
             records.append(TaskExecutionRecord(task_id=task.task_id, task_type=task.task_type, title=task.title, status="blocked", sprint=task.sprint, error=f"Dependencies not completed: {', '.join(missing)}"))
             break
         try:
-            feedback = artifacts_by_name.get("qa_feedback") if task.task_id.startswith(tuple(f"{r.task_id}_rework_" for r in records if r.task_type != "quality_review")) else None
-            execution = execute_task(ExecutionRequest(task_type=task.task_type, prompt=_task_prompt(plan.objective, task.title, task.task_type, task.inputs, artifacts_by_name, feedback), file_ids=request.file_ids), free_only=free_only)
+            feedback = rework_feedback_by_task.get(task.task_id)
+            execution = execute_task(
+                ExecutionRequest(
+                    task_type=task.task_type,
+                    prompt=_task_prompt(plan.objective, task.title, task.task_type, task.inputs, artifacts_by_name, feedback),
+                    file_ids=request.file_ids,
+                ),
+                free_only=free_only,
+            )
             artifact_ids: list[str] = []
             for output_name in task.outputs:
                 artifact_id = f"{task.task_id}:{output_name}"
@@ -163,24 +201,63 @@ def execute_mission(request: MissionExecutionRequest, *, free_only: bool = True)
 
             if task.quality_gate:
                 recommendation = _review_recommendation(execution.output) or "REWORK"
+                problem = _review_problem(execution.output)
                 manager_decision = _manager_decide(execution.output)
-                review_attempts += 1
-                records.append(TaskExecutionRecord(task_id=task.task_id, task_type=task.task_type, title=task.title, status="reviewed", worker_id=execution.worker_id, worker_name=execution.worker_name, output=execution.output, route_score=execution.route_score, telemetry=execution.telemetry, artifact_ids=artifact_ids, quality_decision=recommendation, review_recommendation=recommendation, manager_decision=manager_decision, sprint=task.sprint))
+                records.append(TaskExecutionRecord(
+                    task_id=task.task_id,
+                    task_type=task.task_type,
+                    title=task.title,
+                    status="reviewed",
+                    worker_id=execution.worker_id,
+                    worker_name=execution.worker_name,
+                    output=execution.output,
+                    route_score=execution.route_score,
+                    telemetry=execution.telemetry,
+                    artifact_ids=artifact_ids,
+                    quality_decision=recommendation,
+                    review_recommendation=recommendation,
+                    manager_decision=manager_decision,
+                    rework_number=rework_count,
+                    rework_problem=problem,
+                    sprint=task.sprint,
+                ))
+
                 if manager_decision == "REWORK":
-                    if review_attempts >= max_rework_cycles:
-                        return MissionExecutionResponse(status="rework_required", objective=plan.objective, execution_order=execution_order, manager_decision="REWORK", tasks=records, artifacts=artifact_records)
+                    if rework_count >= max_reworks:
+                        return _mission_response("rework_limit_reached", plan, execution_order, "REWORK", rework_count, records, artifact_records)
+
                     target = next((r for r in reversed(records[:-1]) if r.status == "completed" and r.task_type != "quality_review"), None)
                     if target is None:
-                        return MissionExecutionResponse(status="rework_required", objective=plan.objective, execution_order=execution_order, manager_decision="REWORK", tasks=records, artifacts=artifact_records)
-                    rework_id = f"{target.task_id}_rework_{review_attempts}"
-                    rework_task = task_by_id[target.task_id].model_copy(update={"task_id": rework_id, "title": f"Rework: {target.title}", "dependencies": [task.task_id], "quality_gate": False, "outputs": [f"{target.task_type}_rework_{review_attempts}"], "sprint": task.sprint + 1})
+                        return _mission_response("rework_required", plan, execution_order, "REWORK", rework_count, records, artifact_records)
+
+                    rework_count += 1
+                    rework_id = f"{target.task_id}_rework_{rework_count}"
+                    target_task = task_by_id[target.task_id]
+                    rework_task = target_task.model_copy(update={
+                        "task_id": rework_id,
+                        "title": f"Rework #{rework_count}: {target.title}",
+                        "dependencies": [task.task_id],
+                        "inputs": list(target_task.outputs),
+                        "quality_gate": False,
+                        "outputs": [f"{target.task_type}_rework_{rework_count}"],
+                        "sprint": task.sprint + 1,
+                    })
                     task_by_id[rework_id] = rework_task
+                    rework_feedback_by_task[rework_id] = problem or "QA did not provide a specific problem statement; independently inspect and correct the reviewed work."
                     execution_order.insert(index + 1, rework_id)
-                    new_review_id = f"quality_review_{review_attempts}"
-                    review_task = task_by_id[task.task_id].model_copy(update={"task_id": new_review_id, "title": f"Review rework #{review_attempts}", "dependencies": [rework_id], "inputs": rework_task.outputs, "outputs": [f"quality_review_{review_attempts}"], "sprint": task.sprint + 1})
+
+                    new_review_id = f"quality_review_{rework_count}"
+                    review_task = task_by_id[task.task_id].model_copy(update={
+                        "task_id": new_review_id,
+                        "title": f"Review rework #{rework_count}",
+                        "dependencies": [rework_id],
+                        "inputs": list(rework_task.outputs),
+                        "outputs": [f"quality_review_{rework_count}"],
+                        "sprint": task.sprint + 1,
+                    })
                     task_by_id[new_review_id] = review_task
                     execution_order.insert(index + 2, new_review_id)
-                    artifacts_by_name["qa_feedback"] = execution.output
+
                 index += 1
                 continue
 
@@ -192,4 +269,4 @@ def execute_mission(request: MissionExecutionRequest, *, free_only: bool = True)
 
     manager_decision = "ACCEPT" if records and records[-1].manager_decision == "ACCEPT" else "PENDING"
     status = "completed" if manager_decision == "ACCEPT" else "failed"
-    return MissionExecutionResponse(status=status, objective=plan.objective, execution_order=execution_order, manager_decision=manager_decision, tasks=records, artifacts=artifact_records)
+    return _mission_response(status, plan, execution_order, manager_decision, rework_count, records, artifact_records)
