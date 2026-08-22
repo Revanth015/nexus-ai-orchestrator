@@ -21,6 +21,8 @@ class WorkerCandidate(BaseModel):
     execution_ready: bool
     resource_status: str
     eligible: bool
+    # Kept for API compatibility with the existing execution layer; eligibility is now always dynamic.
+    eligible_for_task: bool = True
     reason: str
 
 class WorkerRouteResponse(BaseModel):
@@ -45,7 +47,6 @@ def _score(worker: WorkerProfile, capability: str, task_type: str) -> tuple[floa
     reliability = max(0.0, min(100.0, float(worker.capabilities.reliability or 0) + learned["reliability"]))
     efficiency = max(0.0, min(100.0, float(worker.capabilities.efficiency or 0) + learned["efficiency"]))
     evidence = performance["score"] if performance["observations"] else prior
-    # As evidence accumulates, observed task performance progressively outweighs the onboarding prior.
     evidence_weight = min(0.85, performance["observations"] / 20.0 * 0.85)
     blended = prior * (1.0 - evidence_weight) + evidence * evidence_weight
     score = blended * 0.65 + reliability * 0.20 + efficiency * 0.10 + (15 if worker.metadata.get("execution_ready", False) else 0)
@@ -71,6 +72,7 @@ def route_task(task_type: str, *, free_only: bool = True) -> WorkerRouteResponse
             execution_ready=bool(worker.metadata.get("execution_ready", False)),
             resource_status=worker.resource.free_status.value,
             eligible=True,
+            eligible_for_task=True,
             reason=(
                 f"Best observed fit: {performance['score']:.1f} with {int(performance['observations'])} task observations" if performance["observations"] else
                 f"Onboarding capability prior: {_capability_score(worker, capability):.1f}; insufficient task evidence"
