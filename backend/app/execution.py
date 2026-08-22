@@ -16,6 +16,8 @@ class ExecutionRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=20000)
     task_type: str = Field(default="general_reasoning", min_length=1, max_length=64)
     file_ids: list[str] = Field(default_factory=list, max_length=10)
+    forced_worker_id: str | None = None
+    excluded_worker_ids: list[str] = Field(default_factory=list, max_length=20)
 
 class MissionExecutionRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=20000)
@@ -61,15 +63,22 @@ def _run_worker(worker_id, task_type, prompt, files):
     raise RuntimeError(f"Worker '{worker_id}' has no registered executor.")
 
 def execute_task(request: ExecutionRequest, *, free_only=True) -> ExecutionResponse:
-    route = route_task(request.task_type, free_only=free_only)
-    if not route.execution_ready or not route.recommended_worker_id: raise RuntimeError(f"No execution-ready free worker is available for task type '{request.task_type}'.")
-    candidate = next((item for item in route.candidates if item.worker_id == route.recommended_worker_id and item.execution_ready and item.eligible_for_task), None)
-    if candidate is None: raise RuntimeError(f"Worker routing selected '{route.recommended_worker_id}', but that worker is not execution-ready or eligible.")
+    route = route_task(request.task_type, free_only=free_only, exclude_worker_ids=set(request.excluded_worker_ids))
+    if request.forced_worker_id:
+        candidate = next((item for item in route.candidates if item.worker_id == request.forced_worker_id and item.execution_ready and item.eligible_for_task), None)
+        if candidate is None:
+            raise RuntimeError(f"Manager selected worker '{request.forced_worker_id}', but that worker is not execution-ready or eligible for this task.")
+        routing_policy = "manager_directed_allocation"
+    else:
+        if not route.execution_ready or not route.recommended_worker_id: raise RuntimeError(f"No execution-ready free worker is available for task type '{request.task_type}'.")
+        candidate = next((item for item in route.candidates if item.worker_id == route.recommended_worker_id and item.execution_ready and item.eligible_for_task), None)
+        if candidate is None: raise RuntimeError(f"Worker routing selected '{route.recommended_worker_id}', but that worker is not execution-ready or eligible.")
+        routing_policy = route.routing_policy
     files = _load_files(request.file_ids); prompt = request.prompt + ("\n\nUploaded file context:\n" + _file_context_text(files) if files else "")
     try: result = _run_worker(candidate.worker_id, request.task_type, prompt, files)
     except Exception: record_result(candidate.worker_id, task_type=request.task_type, success=False); raise
     telemetry = result["telemetry"]; record_result(candidate.worker_id, task_type=request.task_type, success=True, latency_ms=float(telemetry.get("last_latency_ms") or 0))
-    return ExecutionResponse(status="completed", task_type=request.task_type, worker_id=candidate.worker_id, worker_name=candidate.name, routing_policy=route.routing_policy, route_score=candidate.score, output=str(result["text"]), telemetry=telemetry)
+    return ExecutionResponse(status="completed", task_type=request.task_type, worker_id=candidate.worker_id, worker_name=candidate.name, routing_policy=routing_policy, route_score=candidate.score, output=str(result["text"]), telemetry=telemetry)
 
 def _task_prompt(objective, title, task_type, inputs, artifacts, feedback=None):
     context = ""
@@ -103,7 +112,14 @@ def execute_mission(request: MissionExecutionRequest, *, free_only=True) -> Miss
         if missing:
             records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="blocked",sprint=task.sprint,error=f"Dependencies not completed: {', '.join(missing)}")); break
         try:
-            feedback=rework_feedback_by_task.get(task.task_id); execution=execute_task(ExecutionRequest(task_type=task.task_type,prompt=_task_prompt(plan.objective,task.title,task.task_type,task.inputs,artifacts_by_name,feedback),file_ids=request.file_ids),free_only=free_only); artifact_ids=[]
+            feedback=rework_feedback_by_task.get(task.task_id)
+            is_review = task.task_type == "quality_review"
+            excluded = {r.worker_id for r in records if r.worker_id} if is_review else set()
+            manager_allocation = decide_worker_for_task(task.task_type, free_only=free_only, budget_remaining=max(1, 10-len(records)))
+            if manager_allocation.action == "STOP" or not manager_allocation.selected_worker_id:
+                raise RuntimeError(f"Manager stopped task '{task.title}': {manager_allocation.rationale}")
+            execution=execute_task(ExecutionRequest(task_type=task.task_type,prompt=_task_prompt(plan.objective,task.title,task.task_type,task.inputs,artifacts_by_name,feedback),file_ids=request.file_ids,forced_worker_id=manager_allocation.selected_worker_id,excluded_worker_ids=list(excluded)),free_only=free_only)
+            artifact_ids=[]
             for output_name in task.outputs:
                 artifact_id=f"{task.task_id}:{output_name}"; content=execution.output; artifact_records.append(ArtifactRecord(artifact_id=artifact_id,task_id=task.task_id,name=output_name,artifact_type=_artifact_type(task.task_type),content=content,size_chars=len(content),preview=content[:280].replace("\n"," "))); artifacts_by_name[output_name]=content; artifact_ids.append(artifact_id)
             if task.quality_gate:
@@ -115,8 +131,8 @@ def execute_mission(request: MissionExecutionRequest, *, free_only=True) -> Miss
                     if target is None: return _mission_response("rework_required",plan,execution_order,"REWORK",rework_count,records,artifact_records)
                     rework_count+=1; target_task=task_by_id[target.task_id]; rework_id=f"{target.task_id}_rework_{rework_count}"; rework_task=target_task.model_copy(update={"task_id":rework_id,"title":f"Rework #{rework_count}: {target.title}","dependencies":[task.task_id],"inputs":list(target_task.outputs),"quality_gate":False,"outputs":[f"{target.task_type}_rework_{rework_count}"],"sprint":task.sprint+1}); task_by_id[rework_id]=rework_task; rework_feedback_by_task[rework_id]=problem or "Correct the reviewed work using independent inspection."; execution_order.insert(index+1,rework_id); review_id=f"quality_review_{rework_count}"; review_task=task_by_id[task.task_id].model_copy(update={"task_id":review_id,"title":f"Review rework #{rework_count}","dependencies":[rework_id],"inputs":list(rework_task.outputs),"outputs":[f"quality_review_{rework_count}"],"sprint":task.sprint+1}); task_by_id[review_id]=review_task; execution_order.insert(index+2,review_id)
                 index+=1; continue
-            records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="completed",worker_id=execution.worker_id,worker_name=execution.worker_name,output=execution.output,route_score=execution.route_score,telemetry=execution.telemetry,artifact_ids=artifact_ids,sprint=task.sprint))
+            records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="completed",worker_id=execution.worker_id,worker_name=execution.worker_name,output=execution.output,route_score=execution.route_score,telemetry=execution.telemetry,artifact_ids=artifact_ids,manager_decision=manager_allocation.action,sprint=task.sprint))
         except Exception as exc:
-            records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="failed",sprint=task.sprint,error=str(exc))); break
+            records.append(TaskExecutionRecord(task_id=task.task_id,task_type=task.task_type,title=task.title,status="failed",sprint=task.sprint,error=str(exc),manager_decision="STOP")); break
         index+=1
     manager_decision="ACCEPT" if records and records[-1].manager_decision=="ACCEPT" else "PENDING"; status="completed" if manager_decision=="ACCEPT" else "failed"; return _mission_response(status,plan,execution_order,manager_decision,rework_count,records,artifact_records)
