@@ -125,9 +125,19 @@ def _quality_review(prompt: str) -> str:
     ]
     passed = all(check.endswith("present") or check == "sufficient_artifact_content" for check in checks)
     recommendation = "PASS" if passed else "REWORK"
+    if passed:
+        problem = "None identified."
+    else:
+        problems = {
+            "task_context_missing": "The review task is missing required mission/task context.",
+            "upstream_artifact_missing": "The upstream employee artifact is missing from the review input.",
+            "artifact_too_short": "The supplied work artifact is too short for a reliable quality review.",
+        }
+        problem = "; ".join(problems[check] for check in checks if check in problems) or "Quality requirements were not satisfied."
     return (
         "Quality review employee completed an independent review.\n"
         f"Checks: {', '.join(checks)}.\n"
+        f"Problem identified: {problem}\n"
         f"Recommendation to NEXUS Manager: {recommendation}\n"
         "The Manager retains final authority over acceptance."
     )
