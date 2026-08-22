@@ -24,6 +24,11 @@ class WorkerType(str, Enum):
     LOCAL = "local"
 
 
+class CorporateRole(str, Enum):
+    EMPLOYEE = "employee"
+    QA_EMPLOYEE = "qa_employee"
+
+
 class TaskStatus(str, Enum):
     PENDING = "pending"
     READY = "ready"
@@ -50,6 +55,13 @@ class QualityStatus(str, Enum):
     ACCEPTABLE = "acceptable"
     REWORK = "rework"
     BLOCKED = "blocked"
+
+
+class ManagerDecision(str, Enum):
+    ACCEPT = "accept"
+    REWORK = "rework"
+    PENDING = "pending"
+    STOPPED = "stopped"
 
 
 class CapabilityScores(BaseModel):
@@ -81,6 +93,7 @@ class WorkerProfile(BaseModel):
     name: str
     provider: str
     worker_type: WorkerType
+    corporate_role: CorporateRole = CorporateRole.EMPLOYEE
     capabilities: CapabilityScores = Field(default_factory=CapabilityScores)
     resource: ResourceState = Field(default_factory=ResourceState)
     enabled: bool = True
@@ -132,6 +145,7 @@ class QualityReview(BaseModel):
     issues: list[QualityIssue] = Field(default_factory=list)
     cycle: int = 0
     reviewer_worker_id: str | None = None
+    manager_decision: ManagerDecision = ManagerDecision.PENDING
 
 
 class Mission(BaseModel):
