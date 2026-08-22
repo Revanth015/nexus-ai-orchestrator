@@ -38,11 +38,11 @@ class MissionExecutionResponse(BaseModel):
 class ManagerExecutionDecision(BaseModel):
     action: str; rationale: str; confidence: float; estimated_value: float; resource_cost: float; verification_required: bool; collaboration_required: bool; selected_worker_id: str | None = None
 
-def decide_worker_for_task(task_type: str, *, free_only: bool = True, budget_remaining: int = 10) -> ManagerExecutionDecision:
-    route = route_task(task_type, free_only=free_only)
+def decide_worker_for_task(task_type: str, *, free_only: bool = True, budget_remaining: int = 10, exclude_worker_ids: set[str] | None = None) -> ManagerExecutionDecision:
+    route = route_task(task_type, free_only=free_only, exclude_worker_ids=exclude_worker_ids)
     candidates = [c for c in route.candidates if c.execution_ready and c.eligible_for_task]
     if not candidates:
-        return ManagerExecutionDecision(action="STOP", rationale=f"No execution-ready worker is available for {task_type}.", confidence=0, estimated_value=0, resource_cost=0, verification_required=False, collaboration_required=False)
+        return ManagerExecutionDecision(action="STOP", rationale=f"No execution-ready worker is available for {task_type} after applying Manager exclusions.", confidence=0, estimated_value=0, resource_cost=0, verification_required=False, collaboration_required=False)
     evidence = [(c, task_performance(c.worker_id, task_type)) for c in candidates]
     best, performance = max(evidence, key=lambda item: (item[1].get("score", 0), item[1].get("confidence", 0), item[0].score))
     decision = manager_decide(task_type=task_type, complexity=25, confidence=performance.get("confidence", 0), quality_risk=35, worker_score=performance.get("score", 0), collaboration_score=0, latency_ms=performance.get("avg_latency_ms", 0), budget_remaining=budget_remaining, evidence_gap=100-performance.get("confidence", 0))
@@ -67,7 +67,7 @@ def execute_task(request: ExecutionRequest, *, free_only=True) -> ExecutionRespo
     if request.forced_worker_id:
         candidate = next((item for item in route.candidates if item.worker_id == request.forced_worker_id and item.execution_ready and item.eligible_for_task), None)
         if candidate is None:
-            raise RuntimeError(f"Manager selected worker '{request.forced_worker_id}', but that worker is not execution-ready or eligible for this task.")
+            raise RuntimeError(f"Manager selected worker '{request.forced_worker_id}', but that worker is not execution-ready, eligible, or allowed for this task.")
         routing_policy = "manager_directed_allocation"
     else:
         if not route.execution_ready or not route.recommended_worker_id: raise RuntimeError(f"No execution-ready free worker is available for task type '{request.task_type}'.")
@@ -115,7 +115,7 @@ def execute_mission(request: MissionExecutionRequest, *, free_only=True) -> Miss
             feedback=rework_feedback_by_task.get(task.task_id)
             is_review = task.task_type == "quality_review"
             excluded = {r.worker_id for r in records if r.worker_id} if is_review else set()
-            manager_allocation = decide_worker_for_task(task.task_type, free_only=free_only, budget_remaining=max(1, 10-len(records)))
+            manager_allocation = decide_worker_for_task(task.task_type, free_only=free_only, budget_remaining=max(1, 10-len(records)), exclude_worker_ids=excluded)
             if manager_allocation.action == "STOP" or not manager_allocation.selected_worker_id:
                 raise RuntimeError(f"Manager stopped task '{task.title}': {manager_allocation.rationale}")
             execution=execute_task(ExecutionRequest(task_type=task.task_type,prompt=_task_prompt(plan.objective,task.title,task.task_type,task.inputs,artifacts_by_name,feedback),file_ids=request.file_ids,forced_worker_id=manager_allocation.selected_worker_id,excluded_worker_ids=list(excluded)),free_only=free_only)
