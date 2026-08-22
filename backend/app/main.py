@@ -9,6 +9,7 @@ from .planner_models import PlanResponse
 from .prompt_analyzer import analyze_prompt
 from .prompt_models import PromptAnalysisResponse, PromptRequest
 from .task_planner import build_task_plan
+from .worker_learning import learning_snapshot, self_initialize
 from .worker_registry import list_workers
 from .worker_router import WorkerRouteResponse, route_task
 
@@ -40,7 +41,15 @@ async def upload_file(file: UploadFile = File(...)) -> dict[str, object]:
 
 @app.get("/workers")
 def workers() -> dict[str, object]:
-    return {"free_only": settings.free_only, "workers": [worker.model_dump(mode="json") for worker in list_workers()], "note": "Capability scores are routing priors; live connector telemetry determines execution readiness."}
+    return {"free_only": settings.free_only, "workers": [worker.model_dump(mode="json") for worker in list_workers()], "note": "Routing scores are dynamic priors: live connector readiness plus observed employee performance update allocation over time."}
+
+@app.get("/workers/learning")
+def workers_learning() -> dict[str, object]:
+    return learning_snapshot()
+
+@app.post("/workers/self-initialize")
+def workers_self_initialize() -> dict[str, object]:
+    return self_initialize()
 
 @app.get("/route/{task_type}", response_model=WorkerRouteResponse)
 def route(task_type: str) -> WorkerRouteResponse:
