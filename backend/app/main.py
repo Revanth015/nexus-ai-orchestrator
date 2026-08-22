@@ -1,7 +1,8 @@
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
-from .execution import ExecutionRequest, ExecutionResponse, MissionExecutionRequest, MissionExecutionResponse, execute_mission, execute_task, decide_worker_for_task, ManagerExecutionDecision
+from .execution import ExecutionRequest, ExecutionResponse, MissionExecutionRequest, MissionExecutionResponse, execute_task, decide_worker_for_task, ManagerExecutionDecision
+from .mission_execution_service import execute_mission_with_memory
 from .file_store import save_upload
 from .gemini_connector import GeminiStatus, GeminiTestRequest, status as gemini_status, test_connection
 from .ai_connectors import claude_status, perplexity_status, test_claude, test_perplexity
@@ -15,7 +16,7 @@ from .worker_router import WorkerRouteResponse, route_task
 from .collaboration_planner import CollaborationDecision, collaboration_history, plan_collaboration
 from .adaptive_manager import AdaptiveMissionState, classify_replan_signal
 from .audit_log import list_events, mission_summary
-from .mission_memory import create_mission, get_mission, update_mission, transition, add_task, add_artifact, add_decision, add_qa_finding, add_collaboration, record_resource_use, recent_memory, memory_snapshot
+from .mission_memory import create_mission, get_mission, update_mission, transition, recent_memory, memory_snapshot
 
 app = FastAPI(title=settings.app_name, version="0.1.0", description="Free-first AI orchestration backend for NEXUS.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -103,7 +104,7 @@ def execute(request: ExecutionRequest) -> ExecutionResponse:
     except Exception as exc: raise HTTPException(status_code=502, detail=str(exc)) from exc
 @app.post("/execute-mission", response_model=MissionExecutionResponse)
 def execute_mission_endpoint(request: MissionExecutionRequest) -> MissionExecutionResponse:
-    try: return execute_mission(request, free_only=settings.free_only)
+    try: return execute_mission_with_memory(request, free_only=settings.free_only)
     except FileNotFoundError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc: raise HTTPException(status_code=502, detail=str(exc)) from exc
 
