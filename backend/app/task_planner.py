@@ -9,7 +9,7 @@ def _add_task(tasks: list[PlanTask], task_id: str, title: str, task_type: str, *
 
 
 def build_task_plan(analysis: IntentAnalysis) -> TaskPlan:
-    """NEXUS Manager planning layer: create an agile task backlog and worker hand-offs locally."""
+    """NEXUS Manager: act as the user's virtual corporate manager and build an agile employee backlog."""
     tasks: list[PlanTask] = []
     if analysis.needs_research:
         _add_task(tasks, "research", "Research and source evidence", "research", outputs=["research_brief"], workers=["research"])
@@ -30,19 +30,20 @@ def build_task_plan(analysis: IntentAnalysis) -> TaskPlan:
     if not tasks and "general_reasoning" in analysis.task_types:
         _add_task(tasks, "reasoning", "Reason through the requested task", "general_reasoning", outputs=["reasoning_output"], workers=["ai"])
 
-    # Agile Definition of Done: every mission is reviewed by a separate employee.
-    # The reviewer recommends PASS/REWORK; the Manager owns the final decision.
+    # Agile Definition of Done: an independent QA employee reviews the work.
+    # QA can recommend PASS/REWORK, but only the NEXUS Manager can accept the mission.
     if tasks:
         deps = [t.task_id for t in tasks]
         inputs = [x for t in tasks for x in t.outputs]
-        _add_task(tasks, "quality_review", "Independent quality review", "quality_review", deps=deps, inputs=inputs, outputs=["quality_review"], workers=["validator", "ai"], quality_gate=True)
+        _add_task(tasks, "quality_review", "Independent QA employee review", "quality_review", deps=deps, inputs=inputs, outputs=["quality_review"], workers=["validator", "ai"], quality_gate=True)
 
     notes = [
-        "NEXUS Manager decomposes the user's objective locally before any employee is called.",
-        "Tasks are treated as an agile sprint backlog with dependencies, inputs, outputs, and worker allocation at execution time.",
-        "Employees produce artifacts; downstream employees consume those artifacts.",
-        "A separate Quality Review Employee reviews the Definition of Done and reports PASS or REWORK to the Manager.",
-        "The Manager owns the final ACCEPT/REWORK decision and can create a new rework task for the appropriate employee.",
+        "NEXUS Manager represents the user/CEO: it owns objective interpretation, task decomposition, allocation, coordination, and final acceptance.",
+        "Every mission is organized as an agile sprint backlog with dependencies, inputs, outputs, hand-offs, and worker allocation at execution time.",
+        "AI and tool workers are employees: they execute assigned tasks and return artifacts to the Manager's workflow.",
+        "Quality Review is a separate QA employee role. It independently checks the Definition of Done, identifies specific problems, and recommends PASS or REWORK.",
+        "The QA employee never makes the final corporate decision. The Manager decides whether the work is acceptable or must be reworked.",
+        "Each rework is a new employee task carrying the QA problem statement forward. At most three reworks are permitted before the Manager stops the mission.",
     ]
     if analysis.needs_research and analysis.needs_presentation:
         notes.append("Research output is an input to presentation generation.")
@@ -50,4 +51,4 @@ def build_task_plan(analysis: IntentAnalysis) -> TaskPlan:
         notes.append("File analysis output is an input to presentation generation.")
     if analysis.needs_data_analysis and analysis.needs_presentation:
         notes.append("Analysis output is an input to presentation generation.")
-    return TaskPlan(objective=analysis.objective, tasks=tasks, execution_order=[task.task_id for task in tasks], notes=notes, planner="local_graph_v2_agile")
+    return TaskPlan(objective=analysis.objective, tasks=tasks, execution_order=[task.task_id for task in tasks], notes=notes, planner="local_graph_v3_virtual_corporate_agile")
