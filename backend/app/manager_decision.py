@@ -30,7 +30,14 @@ def decide(*, task_type: str, complexity: float, confidence: float, quality_risk
     verification = quality_risk >= 70 or complexity >= 80 or confidence < 45
     collaboration = (complexity >= 65 and collaboration_score >= 55) or evidence_gap >= 55
 
-    if worker_score < 60:
+    # A new employee has no task-specific history yet. That is not a reason
+    # for the Manager to reject the employee: use the capability prior chosen
+    # by the router and place the worker in controlled exploratory execution.
+    # Subsequent real task observations will replace this prior in routing.
+    if worker_score < 60 and confidence < 10 and evidence_gap >= 90:
+        action = "EXPLORE"
+        rationale = "Worker has insufficient task-specific history; assign controlled exploratory work using the current capability prior, then learn from the observed result."
+    elif worker_score < 60:
         action = "EXPLORE"
         rationale = "No established worker has sufficient task-specific evidence; allocate controlled exploratory work."
     elif verification:
