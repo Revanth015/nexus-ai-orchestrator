@@ -4,6 +4,22 @@ import { Activity, BrainCircuit, CheckCircle2, CircleDot, Paperclip, RefreshCw, 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 const stateClass = (state = "PLANNING") => `mission-state state-${state.toLowerCase()}`;
 
+const assessmentEntries = (result) => {
+  if (!result) return [];
+  if (Array.isArray(result.workers)) return result.workers;
+  if (Array.isArray(result.results)) return result.results;
+  if (Array.isArray(result.assessments)) return result.assessments;
+  if (Array.isArray(result.worker_results)) return result.worker_results;
+  return [];
+};
+
+const assessmentMetric = (entry, key, fallback = null) => {
+  if (entry?.[key] != null) return entry[key];
+  if (entry?.metrics?.[key] != null) return entry.metrics[key];
+  if (entry?.summary?.[key] != null) return entry.summary[key];
+  return fallback;
+};
+
 export default function ManagerDashboard() {
   const [prompt, setPrompt] = useState("");
   const [status, setStatus] = useState("checking");
@@ -93,7 +109,8 @@ export default function ManagerDashboard() {
   const completed = execution?.tasks?.filter(t => ["completed", "reviewed"].includes(t.status)).length ?? 0;
   const total = execution?.tasks?.length ?? 0;
   const workersUsed = mission?.active_workers?.length ?? 0;
-  const assessmentWorkers = assessment?.workers ?? [];
+  const assessmentWorkers = assessmentEntries(assessment);
+  const assessmentIsComplete = assessment?.status === "completed" || assessmentMode === "results";
 
   return (
     <main className="manager-shell">
@@ -119,7 +136,23 @@ export default function ManagerDashboard() {
               <button type="button" className="assessment-button" disabled={assessmentBusy} onClick={() => runAssessment(false)}><ClipboardCheck size={15} /> {assessmentBusy && assessmentMode === "prepare" ? "Preparing..." : "Prepare assessment"}</button>
               <button type="button" className="assessment-button primary" disabled={assessmentBusy || assessmentMode !== "prepared"} onClick={() => runAssessment(true)}><Activity size={15} /> {assessmentBusy && assessmentMode === "prepared" ? "Running benchmarks..." : "Run self assessment"}</button>
             </div>
-            {assessment && <div className="assessment-results"><div className="assessment-summary"><strong>{assessment.status === "initialized" ? "Benchmark plan ready" : "Assessment completed"}</strong><span>{assessment.policy ?? "New workers get benchmarks; existing worker history is preserved."}</span></div>{assessmentWorkers.map((w) => <div className="assessment-worker" key={w.worker_id}><div><strong>{w.worker_id}</strong><small>{w.action ?? w.status ?? "assessed"}</small></div><div className="assessment-stats"><span>Observations <b>{w.observations ?? 0}</b></span><span>Tests <b>{w.tests_completed ?? 0}/{w.tests_total ?? "—"}</b></span>{w.overall_score != null && <span>Score <b>{w.overall_score}</b></span>}{w.confidence != null && <span>Confidence <b>{w.confidence}</b></span>}</div></div>)}</div>}
+            {assessment && <div className="assessment-results">
+              <div className={`assessment-summary ${assessmentIsComplete ? "complete" : "ready"}`}><div><strong>{assessmentIsComplete ? "Assessment completed" : "Benchmark plan ready"}</strong><span>{assessment.policy ?? "New workers get benchmarks; existing worker history is preserved."}</span></div><span className="assessment-count">{assessmentWorkers.length} workers</span></div>
+              {assessmentWorkers.length === 0 && <div className="assessment-empty">No worker result records were returned by the assessment endpoint.</div>}
+              {assessmentWorkers.map((w) => {
+                const testsCompleted = assessmentMetric(w, "tests_completed", 0);
+                const testsTotal = assessmentMetric(w, "tests_total", null);
+                const score = assessmentMetric(w, "overall_score", assessmentMetric(w, "score", null));
+                const confidence = assessmentMetric(w, "confidence", null);
+                const observations = assessmentMetric(w, "observations", 0);
+                const action = w.action ?? w.status ?? "assessed";
+                const skipped = String(action).includes("skipped") || String(w.status ?? "").includes("skipped");
+                return <div className="assessment-worker" key={w.worker_id ?? w.id ?? Math.random()}>
+                  <div className="assessment-worker-main"><div className="assessment-worker-title"><strong>{w.worker_id ?? w.id ?? "Unknown worker"}</strong><span className={`assessment-state ${skipped ? "skipped" : assessmentIsComplete ? "done" : "ready"}`}>{skipped ? "SKIPPED" : assessmentIsComplete ? "ASSESSED" : "READY"}</span></div><small>{w.reason ?? action}</small></div>
+                  <div className="assessment-stats"><span>Observations <b>{observations}</b></span><span>Tests <b>{testsCompleted}{testsTotal != null ? `/${testsTotal}` : ""}</b></span>{score != null && <span>Score <b>{score}</b></span>}{confidence != null && <span>Confidence <b>{confidence}</b></span>}</div>
+                </div>;
+              })}
+            </div>}
           </section>
 
           {mission && <section className="manager-card">
