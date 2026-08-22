@@ -8,6 +8,7 @@ from .gemini_connector import generate_text
 from .local_workers import execute_local_task
 from .prompt_analyzer import analyze_prompt
 from .task_planner import build_task_plan
+from .worker_learning import record_result
 from .worker_router import route_task
 
 
@@ -100,13 +101,19 @@ def execute_task(request: ExecutionRequest, *, free_only: bool = True) -> Execut
     route = route_task(request.task_type, free_only=free_only)
     if not route.execution_ready or not route.recommended_worker_id:
         raise RuntimeError(f"No execution-ready free worker is available for task type '{request.task_type}'.")
-    candidate = next((item for item in route.candidates if item.worker_id == route.recommended_worker_id and item.execution_ready), None)
+    candidate = next((item for item in route.candidates if item.worker_id == route.recommended_worker_id and item.execution_ready and item.eligible_for_task), None)
     if candidate is None:
-        raise RuntimeError(f"Worker routing selected '{route.recommended_worker_id}', but that worker is not execution-ready.")
+        raise RuntimeError(f"Worker routing selected '{route.recommended_worker_id}', but that worker is not execution-ready or is not eligible for this corporate role.")
     files = _load_files(request.file_ids)
     prompt = request.prompt + ("\n\nUploaded file context:\n" + _file_context_text(files) if files else "")
-    result = _run_worker(candidate.worker_id, request.task_type, prompt, files)
-    return ExecutionResponse(status="completed", task_type=request.task_type, worker_id=candidate.worker_id, worker_name=candidate.name, routing_policy=route.routing_policy, route_score=candidate.score, output=str(result["text"]), telemetry=result["telemetry"])
+    try:
+        result = _run_worker(candidate.worker_id, request.task_type, prompt, files)
+    except Exception:
+        record_result(candidate.worker_id, task_type=request.task_type, success=False)
+        raise
+    telemetry = result["telemetry"]
+    record_result(candidate.worker_id, task_type=request.task_type, success=True, latency_ms=float(telemetry.get("last_latency_ms") or 0))
+    return ExecutionResponse(status="completed", task_type=request.task_type, worker_id=candidate.worker_id, worker_name=candidate.name, routing_policy=route.routing_policy, route_score=candidate.score, output=str(result["text"]), telemetry=telemetry)
 
 
 def _task_prompt(objective: str, title: str, task_type: str, inputs: list[str], artifacts: dict[str, str], feedback: str | None = None) -> str:
@@ -203,6 +210,7 @@ def execute_mission(request: MissionExecutionRequest, *, free_only: bool = True)
                 recommendation = _review_recommendation(execution.output) or "REWORK"
                 problem = _review_problem(execution.output)
                 manager_decision = _manager_decide(execution.output)
+                record_result(execution.worker_id, task_type="quality_review", success=True, latency_ms=float(execution.telemetry.get("last_latency_ms") or 0), quality=recommendation)
                 records.append(TaskExecutionRecord(
                     task_id=task.task_id,
                     task_type=task.task_type,
@@ -225,11 +233,9 @@ def execute_mission(request: MissionExecutionRequest, *, free_only: bool = True)
                 if manager_decision == "REWORK":
                     if rework_count >= max_reworks:
                         return _mission_response("rework_limit_reached", plan, execution_order, "REWORK", rework_count, records, artifact_records)
-
                     target = next((r for r in reversed(records[:-1]) if r.status == "completed" and r.task_type != "quality_review"), None)
                     if target is None:
                         return _mission_response("rework_required", plan, execution_order, "REWORK", rework_count, records, artifact_records)
-
                     rework_count += 1
                     rework_id = f"{target.task_id}_rework_{rework_count}"
                     target_task = task_by_id[target.task_id]
@@ -245,7 +251,6 @@ def execute_mission(request: MissionExecutionRequest, *, free_only: bool = True)
                     task_by_id[rework_id] = rework_task
                     rework_feedback_by_task[rework_id] = problem or "QA did not provide a specific problem statement; independently inspect and correct the reviewed work."
                     execution_order.insert(index + 1, rework_id)
-
                     new_review_id = f"quality_review_{rework_count}"
                     review_task = task_by_id[task.task_id].model_copy(update={
                         "task_id": new_review_id,
@@ -257,7 +262,6 @@ def execute_mission(request: MissionExecutionRequest, *, free_only: bool = True)
                     })
                     task_by_id[new_review_id] = review_task
                     execution_order.insert(index + 2, new_review_id)
-
                 index += 1
                 continue
 
