@@ -13,6 +13,7 @@ from .worker_learning import learning_snapshot, self_initialize, run_self_initia
 from .worker_registry import list_workers
 from .worker_router import WorkerRouteResponse, route_task
 from .collaboration_planner import CollaborationDecision, collaboration_history, plan_collaboration
+from .adaptive_manager import AdaptiveMissionState, classify_replan_signal
 
 app = FastAPI(title=settings.app_name, version="0.1.0", description="Free-first AI orchestration backend for NEXUS.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -72,6 +73,32 @@ def collaboration_plan(request: PromptRequest) -> CollaborationDecision:
     analysis = analyze_prompt(request.prompt)
     task_type = analysis.task_types[0] if analysis.task_types else "general_reasoning"
     return plan_collaboration(task_type, request.prompt, free_only=settings.free_only)
+
+@app.post("/adaptive/replan")
+def adaptive_replan(request: PromptRequest) -> dict[str, object]:
+    state = AdaptiveMissionState(objective=request.prompt)
+    signal = classify_replan_signal(status="failed")
+    decision = state.replan_decision(signal["trigger"], "unknown", signal["detail"])
+    return {"status": "replan_ready", "decision": decision, "state": state.snapshot()}
+
+@app.post("/adaptive/observe")
+def adaptive_observe(request: dict[str, object]) -> dict[str, object]:
+    objective = str(request.get("objective", "Adaptive NEXUS mission"))
+    state = AdaptiveMissionState(objective=objective)
+    task_id = str(request.get("task_id", "unknown"))
+    status = str(request.get("status", "completed"))
+    missing = [str(x) for x in request.get("missing_inputs", [])] if isinstance(request.get("missing_inputs", []), list) else []
+    recommendation = request.get("qa_recommendation")
+    problem = request.get("qa_problem")
+    if recommendation in {"PASS", "REWORK"}:
+        decision = state.observe_qa(task_id, str(recommendation), str(problem) if problem else None)
+    elif missing:
+        decision = state.observe_missing_input(task_id, ", ".join(missing))
+    elif status == "failed":
+        decision = state.observe_failure(task_id, str(request.get("error", "Task execution failed.")))
+    else:
+        decision = {"action": "continue", "replan": False, "reason": "No replanning signal detected."}
+    return {"status": "observed", "decision": decision, "state": state.snapshot()}
 
 @app.post("/execute", response_model=ExecutionResponse)
 def execute(request: ExecutionRequest) -> ExecutionResponse:
