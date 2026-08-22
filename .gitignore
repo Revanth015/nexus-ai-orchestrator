@@ -29,6 +29,8 @@ build/
 runtime/
 data/local/
 backend/data/uploads/
+backend/.nexus_ai_connections.json
+backend/.nexus_worker_learning.json
 artifacts/local/
 logs/
 
