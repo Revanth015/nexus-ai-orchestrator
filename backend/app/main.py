@@ -12,6 +12,7 @@ from .task_planner import build_task_plan
 from .worker_learning import learning_snapshot, self_initialize, run_self_initialization
 from .worker_registry import list_workers
 from .worker_router import WorkerRouteResponse, route_task
+from .collaboration_planner import CollaborationDecision, collaboration_history, plan_collaboration
 
 app = FastAPI(title=settings.app_name, version="0.1.0", description="Free-first AI orchestration backend for NEXUS.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -47,6 +48,10 @@ def workers() -> dict[str, object]:
 def workers_learning() -> dict[str, object]:
     return learning_snapshot()
 
+@app.get("/workers/collaboration")
+def workers_collaboration() -> dict[str, object]:
+    return collaboration_history()
+
 @app.post("/workers/self-initialize")
 def workers_self_initialize() -> dict[str, object]:
     return self_initialize()
@@ -61,6 +66,12 @@ def workers_self_initialize_run() -> dict[str, object]:
 @app.get("/route/{task_type}", response_model=WorkerRouteResponse)
 def route(task_type: str) -> WorkerRouteResponse:
     return route_task(task_type, free_only=settings.free_only)
+
+@app.post("/collaboration/plan", response_model=CollaborationDecision)
+def collaboration_plan(request: PromptRequest) -> CollaborationDecision:
+    analysis = analyze_prompt(request.prompt)
+    task_type = analysis.task_types[0] if analysis.task_types else "general_reasoning"
+    return plan_collaboration(task_type, request.prompt, free_only=settings.free_only)
 
 @app.post("/execute", response_model=ExecutionResponse)
 def execute(request: ExecutionRequest) -> ExecutionResponse:
