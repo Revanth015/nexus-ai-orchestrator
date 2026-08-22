@@ -51,6 +51,21 @@ def decide(*, task_type: str, complexity: float, confidence: float, quality_risk
     return ManagerDecision(action, rationale, round(confidence, 2), round(estimated_value, 2), resource_cost, verification, collaboration)
 
 
+def manager_decide(*, task_type: str, complexity: float, confidence: float, quality_risk: float, worker_score: float, collaboration_score: float = 0.0, latency_ms: float = 0.0, budget_remaining: int = 10, evidence_gap: float = 0.0) -> ManagerDecision:
+    """Backward-compatible Manager decision entry point used by the execution layer."""
+    return decide(
+        task_type=task_type,
+        complexity=complexity,
+        confidence=confidence,
+        quality_risk=quality_risk,
+        worker_score=worker_score,
+        collaboration_score=collaboration_score,
+        latency_ms=latency_ms,
+        budget_remaining=budget_remaining,
+        evidence_gap=evidence_gap,
+    )
+
+
 def decision_payload(decision: ManagerDecision) -> dict[str, Any]:
     return {
         "action": decision.action,
