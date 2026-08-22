@@ -3,7 +3,7 @@ from __future__ import annotations
 from .ai_connectors import claude_status, perplexity_status
 from .gemini_connector import runtime_metadata as gemini_runtime_metadata
 from .models import CapabilityScores, FreeStatus, ResourceState, WorkerProfile, WorkerType
-from .worker_learning import get_worker_learning
+from .worker_learning import get_worker_learning, record_result, task_performance
 
 
 _INITIAL_WORKERS = [
