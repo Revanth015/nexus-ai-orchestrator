@@ -25,12 +25,13 @@ def _save(data: dict[str, Any]) -> None:
 
 
 def _public(item: dict[str, Any]) -> dict[str, Any]:
-    # A configured API key is NOT enough to make an AI execution-ready.
-    # NEXUS only exposes api_key_configured=True after a successful live test.
+    # Never return the secret. Configuration and successful connectivity are separate states.
     return {
         k: v for k, v in item.items() if k != "api_key"
     } | {
-        "api_key_configured": bool(item.get("api_key")) and item.get("test_status") == "ok"
+        "api_key_configured": bool(item.get("api_key")),
+        "connection_ready": item.get("test_status") == "ok",
+        "execution_ready": bool(item.get("enabled", True)) and item.get("test_status") == "ok",
     }
 
 
@@ -152,6 +153,8 @@ def test_connection(worker_id: str, prompt: str = "Reply with exactly: NEXUS con
 
 
 def generate_custom(worker_id: str, prompt: str) -> dict[str, Any]:
+    # Execution performs a fresh provider call, so a transient provider failure is
+    # captured and the worker becomes non-ready on the next registry refresh.
     result = test_connection(worker_id, prompt)
     return {
         "text": result["text"],
