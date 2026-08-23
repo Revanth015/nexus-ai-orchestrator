@@ -25,9 +25,13 @@ def _save(data: dict[str, Any]) -> None:
 
 
 def _public(item: dict[str, Any]) -> dict[str, Any]:
+    # A configured API key is NOT enough to make an AI execution-ready.
+    # NEXUS only exposes api_key_configured=True after a successful live test.
     return {
         k: v for k, v in item.items() if k != "api_key"
-    } | {"api_key_configured": bool(item.get("api_key"))}
+    } | {
+        "api_key_configured": bool(item.get("api_key")) and item.get("test_status") == "ok"
+    }
 
 
 def list_connections() -> list[dict[str, Any]]:
