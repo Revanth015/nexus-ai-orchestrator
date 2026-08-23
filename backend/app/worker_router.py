@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-from .models import WorkerProfile
+from .models import WorkerProfile, FreeStatus
 from .worker_learning import learned_adjustments, task_performance, collaboration_performance, get_worker_learning
 from .worker_registry import list_workers
 
@@ -29,7 +29,7 @@ class WorkerRouteResponse(BaseModel):
     execution_ready: bool = False
     candidates: list[WorkerCandidate] = Field(default_factory=list)
     fallback_worker_id: str | None = None
-    routing_policy: str = "dynamic_task_specific_performance_v9"
+    routing_policy: str = "dynamic_task_specific_performance_v10"
     exploration_policy: str = "evidence_aware_exploration"
 
 
@@ -64,7 +64,10 @@ def route_task(task_type: str, *, free_only: bool = True, exclude_worker_ids: se
     excluded = exclude_worker_ids or set()
     workers = [w for w in list_workers() if w.enabled and w.worker_id not in excluded]
     if free_only:
-        workers = [w for w in workers if w.resource.free_status.value not in {"paid", "exhausted"}]
+        # Free-only mode must not silently treat unknown/free-unverified providers as free.
+        workers = [w for w in workers if w.resource.free_status in {
+            FreeStatus.VERIFIED_FREE, FreeStatus.MEASURED_FREE, FreeStatus.ESTIMATED_FREE
+        }]
     candidates = []
     for worker in workers:
         score, performance, exploration, prior_source = _score(worker, capability, task_type)
