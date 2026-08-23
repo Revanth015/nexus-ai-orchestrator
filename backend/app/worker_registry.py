@@ -36,11 +36,35 @@ def _apply_ai_telemetry(worker: WorkerProfile) -> WorkerProfile:
 def _custom_worker(item: dict) -> WorkerProfile:
     raw_caps = item.get("capabilities", {})
     caps = CapabilityScores(**{k: v for k, v in raw_caps.items() if k in CapabilityScores.model_fields})
-    configured = bool(item.get("api_key_configured") or item.get("api_key"))
+    # Custom AIs are execution-ready only after a successful connection test.
+    configured = bool(item.get("api_key_configured"))
+    connection_ready = item.get("test_status") == "ok"
     free_verified = bool(item.get("free_verified"))
-    return WorkerProfile(worker_id=item["worker_id"], name=item["name"], provider=item["provider"], worker_type=WorkerType.AI, capabilities=caps,
-        resource=ResourceState(free_status=FreeStatus.MEASURED_FREE if free_verified and configured else FreeStatus.UNKNOWN, quota_known=False, confidence=100 if free_verified and configured else 0),
-        enabled=bool(item.get("enabled", True)), metadata={"connected": configured, "execution_ready": configured, "connector_configured": configured, "custom": True, "model": item.get("model"), "base_url": item.get("base_url"), "free_verified": free_verified, "notes": "User-added AI employee; credentials remain local and are never returned by the API."})
+    execution_ready = bool(item.get("enabled", True) and configured and connection_ready)
+    return WorkerProfile(
+        worker_id=item["worker_id"], name=item["name"], provider=item["provider"], worker_type=WorkerType.AI,
+        capabilities=caps,
+        resource=ResourceState(
+            free_status=FreeStatus.MEASURED_FREE if free_verified and execution_ready else FreeStatus.UNKNOWN,
+            quota_known=False,
+            confidence=100 if free_verified and execution_ready else 0,
+            last_error=item.get("last_error"),
+        ),
+        enabled=bool(item.get("enabled", True)),
+        metadata={
+            "connected": connection_ready,
+            "execution_ready": execution_ready,
+            "connector_configured": configured,
+            "connection_test_status": item.get("test_status", "untested"),
+            "last_tested_at": item.get("last_tested_at"),
+            "last_latency_ms": item.get("last_latency_ms"),
+            "custom": True,
+            "model": item.get("model"),
+            "base_url": item.get("base_url"),
+            "free_verified": free_verified,
+            "notes": "User-added AI employee; credentials remain local and are never returned by the API.",
+        },
+    )
 
 
 def list_workers() -> list[WorkerProfile]:
