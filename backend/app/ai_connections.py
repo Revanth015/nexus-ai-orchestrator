@@ -22,7 +22,7 @@ def delete_connection(worker_id):
     return changed
 def _url(item,path): return f'{item["base_url"].rstrip("/")}/{path.lstrip("/")}'
 def _request(url,key,method="GET",payload=None,provider=""):
-    headers={"Authorization":f"Bearer {key}","Content-Type":"application/json"}
+    headers={"Authorization":f"Bearer {key}","Content-Type":"application/json","Accept":"application/json","User-Agent":"curl/8.0"}
     if provider=="openrouter": headers.update({"HTTP-Referer":"http://localhost:5173","X-Title":"NEXUS AI Corporate Manager"})
     req=urllib.request.Request(url,data=json.dumps(payload).encode() if payload is not None else None,headers=headers,method=method)
     try:
@@ -50,18 +50,17 @@ def _result(provider,model,base):
     return {"provider":provider,"model_name":model,"base_url":base,"endpoint":"NOT_TESTED","authentication":"NOT_TESTED","model_status":"NOT_TESTED","completion_status":"NOT_TESTED","http_status":None,"latency_ms":None,"overall":"FAIL","error":None,"details":{}}
 def _finish(item,result,started,error=None,code=None,http_status=None):
     result["latency_ms"]=round((time.perf_counter()-started)*1000,2); result["http_status"]=http_status
-    if error: result["error"]={"message":error,"code":code,"http_status":http_status}
+    if error:
+        result["error"]=str(error)
+        result["details"]["error"]={"message":str(error),"code":code,"http_status":http_status}
     ok=result["overall"]=="PASS" and not error
-    _record(item["worker_id"],"ok" if ok else "failed",result,error,code,http_status,result["latency_ms"])
+    _record(item["worker_id"],"ok" if ok else "failed",result,str(error) if error else None,code,http_status,result["latency_ms"])
     return result
 def diagnose_connection(worker_id):
     item=get_connection(worker_id)
     if not item: raise ValueError("AI connection not found.")
     if not item.get("api_key"): raise ValueError("API key is not configured.")
     started=time.perf_counter(); base=item["base_url"].rstrip("/"); model=item["model"]; provider=item["provider"]; result=_result(provider,model,base)
-    # For OpenAI-compatible providers, authentication is proven by a real chat completion.
-    # Do not gate Groq (or another compatible provider) behind /models: some providers reject
-    # catalogue requests even when the key is fully valid for chat/completions.
     result["endpoint"]="PASS"
     try:
         status,body=_request(_url(item,"chat/completions"),item["api_key"],"POST",{"model":model,"messages":[{"role":"user","content":"Reply with exactly: NEXUS connection is working."}],"max_tokens":32,"temperature":0},provider)
