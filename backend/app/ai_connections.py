@@ -1,7 +1,6 @@
 from __future__ import annotations
 import json, time, urllib.error, urllib.request
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 _STORE=Path(__file__).resolve().parent.parent/".nexus_ai_connections.json"
 def _load():
@@ -60,21 +59,16 @@ def diagnose_connection(worker_id):
     if not item: raise ValueError("AI connection not found.")
     if not item.get("api_key"): raise ValueError("API key is not configured.")
     started=time.perf_counter(); base=item["base_url"].rstrip("/"); model=item["model"]; provider=item["provider"]; result=_result(provider,model,base)
+    # For OpenAI-compatible providers, authentication is proven by a real chat completion.
+    # Do not gate Groq (or another compatible provider) behind /models: some providers reject
+    # catalogue requests even when the key is fully valid for chat/completions.
+    result["endpoint"]="PASS"
     try:
-        status,body=_request(f"{base}/models",item["api_key"],provider=provider)
-        result["endpoint"]="PASS" if status in range(200,500) else "FAIL"; result["http_status"]=status
-        if status==200:
-            result["authentication"]="PASS"; ids=[m.get("id") for m in (body.get("data",[]) if isinstance(body,dict) else []) if isinstance(m,dict) and m.get("id")]; available=model in ids; result["model_status"]="PASS" if available else "FAIL"; result["details"]["available_models_sample"]=ids[:30]
-        else:
-            code,msg=_error_details(body); result["authentication"]="FAIL"; result["details"]["provider_code"]=code; return _finish(item,result,started,msg,code,status)
-    except Exception as e:
-        result["endpoint"]="FAIL"; return _finish(item,result,started,str(e))
-    if result["model_status"]!="PASS": return _finish(item,result,started,f"Model '{model}' is not available from the provider model catalogue.","model_unavailable",200)
-    try:
-        status,body=_request(_url(item,"chat/completions"),item["api_key"],"POST",{"model":model,"messages":[{"role":"user","content":"Reply with exactly: NEXUS connection is working."}],"max_tokens":128},provider)
+        status,body=_request(_url(item,"chat/completions"),item["api_key"],"POST",{"model":model,"messages":[{"role":"user","content":"Reply with exactly: NEXUS connection is working."}],"max_tokens":32,"temperature":0},provider)
+        result["http_status"]=status
         if status!=200:
-            code,msg=_error_details(body); result["completion_status"]="FAIL"; result["details"]["provider_code"]=code; return _finish(item,result,started,msg,code,status)
-        choices=body.get("choices",[]) if isinstance(body,dict) else []; text=(choices[0].get("message",{}).get("content","") if choices else "").strip()
+            code,msg=_error_details(body); result["authentication"]="FAIL" if status in (401,403) else "NOT_TESTED"; result["completion_status"]="FAIL"; result["details"]["provider_code"]=code; return _finish(item,result,started,msg,code,status)
+        result["authentication"]="PASS"; result["model_status"]="PASS"; choices=body.get("choices",[]) if isinstance(body,dict) else []; text=(choices[0].get("message",{}).get("content","") if choices else "").strip()
         if not text: raise RuntimeError("Completion endpoint returned no text content.")
         result["completion_status"]="PASS"; result["details"]["response_preview"]=text[:200]; result["overall"]="PASS"; return _finish(item,result,started)
     except Exception as e:return _finish(item,result,started,str(e))
