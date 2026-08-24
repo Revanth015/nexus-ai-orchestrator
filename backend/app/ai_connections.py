@@ -56,19 +56,37 @@ def _finish(item,result,started,error=None,code=None,http_status=None):
     ok=result["overall"]=="PASS" and not error
     _record(item["worker_id"],"ok" if ok else "failed",result,str(error) if error else None,code,http_status,result["latency_ms"])
     return result
+def _extract_completion_text(body):
+    if not isinstance(body,dict): return ""
+    choices=body.get("choices")
+    if not isinstance(choices,list) or not choices: return ""
+    message=choices[0].get("message") if isinstance(choices[0],dict) else None
+    if not isinstance(message,dict): return ""
+    content=message.get("content")
+    if isinstance(content,str) and content.strip(): return content.strip()
+    if isinstance(content,list):
+        parts=[]
+        for part in content:
+            if isinstance(part,dict):
+                text=part.get("text") or part.get("content")
+                if isinstance(text,str) and text.strip(): parts.append(text.strip())
+            elif isinstance(part,str) and part.strip(): parts.append(part.strip())
+        if parts:return "\n".join(parts)
+    reasoning=message.get("reasoning")
+    if isinstance(reasoning,str) and reasoning.strip(): return reasoning.strip()
+    return ""
 def diagnose_connection(worker_id):
     item=get_connection(worker_id)
     if not item: raise ValueError("AI connection not found.")
     if not item.get("api_key"): raise ValueError("API key is not configured.")
-    started=time.perf_counter(); base=item["base_url"].rstrip("/"); model=item["model"]; provider=item["provider"]; result=_result(provider,model,base)
-    result["endpoint"]="PASS"
+    started=time.perf_counter(); base=item["base_url"].rstrip("/"); model=item["model"]; provider=item["provider"]; result=_result(provider,model,base); result["endpoint"]="PASS"
     try:
-        status,body=_request(_url(item,"chat/completions"),item["api_key"],"POST",{"model":model,"messages":[{"role":"user","content":"Reply with exactly: NEXUS connection is working."}],"max_tokens":32,"temperature":0},provider)
-        result["http_status"]=status
+        status,body=_request(_url(item,"chat/completions"),item["api_key"],"POST",{"model":model,"messages":[{"role":"user","content":"Reply with exactly: NEXUS connection is working."}],"max_tokens":32,"temperature":0},provider); result["http_status"]=status
         if status!=200:
             code,msg=_error_details(body); result["authentication"]="FAIL" if status in (401,403) else "NOT_TESTED"; result["completion_status"]="FAIL"; result["details"]["provider_code"]=code; return _finish(item,result,started,msg,code,status)
-        result["authentication"]="PASS"; result["model_status"]="PASS"; choices=body.get("choices",[]) if isinstance(body,dict) else []; text=(choices[0].get("message",{}).get("content","") if choices else "").strip()
-        if not text: raise RuntimeError("Completion endpoint returned no text content.")
+        result["authentication"]="PASS"; result["model_status"]="PASS"; text=_extract_completion_text(body)
+        if not text:
+            result["completion_status"]="FAIL"; result["details"]["response_shape"]={"top_level_keys":list(body.keys()) if isinstance(body,dict) else [],"choices_count":len(body.get("choices",[])) if isinstance(body,dict) and isinstance(body.get("choices"),list) else 0}; return _finish(item,result,started,"Completion endpoint returned no usable text content.")
         result["completion_status"]="PASS"; result["details"]["response_preview"]=text[:200]; result["overall"]="PASS"; return _finish(item,result,started)
     except Exception as e:return _finish(item,result,started,str(e))
 def test_connection(worker_id,prompt="Reply with exactly: NEXUS connection is working."):return diagnose_connection(worker_id)
@@ -79,6 +97,6 @@ def generate_custom(worker_id,prompt):
     started=time.perf_counter();status,body=_request(_url(item,"chat/completions"),item["api_key"],"POST",{"model":item["model"],"messages":[{"role":"user","content":prompt}],"max_tokens":1024},item["provider"])
     if status!=200:
         code,msg=_error_details(body);_record(worker_id,"failed",error=msg,code=code,http_status=status,latency=round((time.perf_counter()-started)*1000,2));raise RuntimeError(f"Execution failed: HTTP {status} [{code}] {msg}")
-    choices=body.get("choices",[]) if isinstance(body,dict) else [];text=(choices[0].get("message",{}).get("content","") if choices else "").strip()
-    if not text:raise RuntimeError("Provider returned no text content.")
+    text=_extract_completion_text(body)
+    if not text:raise RuntimeError("Provider returned no usable text content.")
     return {"text":text,"telemetry":{"worker_id":worker_id,"last_latency_ms":round((time.perf_counter()-started)*1000,2),"configured":True,"execution_ready":True}}
