@@ -8,7 +8,7 @@ from .mission_execution_service import execute_mission_with_memory
 from .file_store import save_upload
 from .gemini_connector import GeminiStatus, GeminiTestRequest, status as gemini_status, test_connection
 from .ai_connectors import claude_status, perplexity_status, test_claude, test_perplexity
-from .ai_connections import list_connections, register_connection, delete_connection, test_connection as test_custom_connection
+from .ai_connections import list_connections, register_connection, delete_connection, test_connection as test_custom_connection, diagnose_connection
 from .planner_models import PlanResponse
 from .prompt_analyzer import analyze_prompt
 from .prompt_models import PromptAnalysisResponse, PromptRequest
@@ -67,6 +67,16 @@ def test_worker_connection(worker_id: str) -> dict[str,object]:
     try: return test_custom_connection(worker_id)
     except ValueError as exc: raise HTTPException(status_code=404,detail=str(exc)) from exc
     except Exception as exc: raise HTTPException(status_code=502,detail=str(exc)) from exc
+@app.post("/workers/connections/{worker_id}/diagnose")
+def diagnose_worker_connection(worker_id: str) -> dict[str,object]:
+    try: return diagnose_connection(worker_id)
+    except ValueError as exc: raise HTTPException(status_code=404,detail=str(exc)) from exc
+    except Exception as exc:
+        try:
+            import json
+            return json.loads(str(exc))
+        except Exception:
+            raise HTTPException(status_code=502,detail=str(exc)) from exc
 
 @app.get("/workers/learning")
 def workers_learning() -> dict[str,object]: return learning_snapshot()
