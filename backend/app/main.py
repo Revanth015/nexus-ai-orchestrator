@@ -14,7 +14,8 @@ from .prompt_analyzer import analyze_prompt
 from .prompt_models import PromptAnalysisResponse, PromptRequest
 from .task_planner import build_task_plan
 from . import worker_learning as _worker_learning
-from .worker_learning import learning_snapshot, self_initialize, run_self_initialization
+from .worker_learning import learning_snapshot, self_initialize
+from .self_assessment_v2 import prepare_assessment, run_assessment
 from .worker_registry import list_workers
 from .worker_router import WorkerRouteResponse, route_task
 from .collaboration_planner import CollaborationDecision, collaboration_history, plan_collaboration
@@ -64,11 +65,13 @@ def workers_learning():return learning_snapshot()
 @app.get("/workers/collaboration")
 def workers_collaboration():return collaboration_history()
 @app.post("/workers/self-initialize")
-def workers_self_initialize():return self_initialize()
+def workers_self_initialize():
+    try:return prepare_assessment()
+    except Exception as exc:raise HTTPException(status_code=502,detail=f"Worker self-assessment preparation failed: {exc}") from exc
 @app.post("/workers/self-initialize/run")
 def workers_self_initialize_run():
-    try:return run_self_initialization()
-    except Exception as exc:raise HTTPException(status_code=502,detail=f"Worker self-initialization failed: {exc}") from exc
+    try:return run_assessment()
+    except Exception as exc:raise HTTPException(status_code=502,detail=f"Worker self-assessment failed: {exc}") from exc
 @app.get("/route/{task_type}",response_model=WorkerRouteResponse)
 def route(task_type:str)->WorkerRouteResponse:return route_task(task_type,free_only=settings.free_only)
 @app.post("/manager/decide/{task_type}",response_model=ManagerExecutionDecision)
