@@ -35,8 +35,14 @@ def _apply_ai_telemetry(worker: WorkerProfile) -> WorkerProfile:
 
 def _custom_worker(item: dict) -> WorkerProfile:
     raw_caps = item.get("capabilities", {})
-    caps = CapabilityScores(**{k: v for k, v in raw_caps.items() if k in CapabilityScores.model_fields})
-    # Custom AIs are execution-ready only after a successful connection test.
+    learning = get_worker_learning(item["worker_id"])
+    onboarding = learning.get("onboarding", {}) if isinstance(learning, dict) else {}
+    benchmark_scores = onboarding.get("benchmark_scores", {}) if isinstance(onboarding, dict) else {}
+    caps_data = {k: v for k, v in raw_caps.items() if k in CapabilityScores.model_fields}
+    for key, value in benchmark_scores.items():
+        if key in CapabilityScores.model_fields and isinstance(value, (int, float)):
+            caps_data[key] = max(0.0, min(100.0, float(value)))
+    caps = CapabilityScores(**caps_data)
     configured = bool(item.get("api_key_configured"))
     connection_ready = item.get("test_status") == "ok"
     free_verified = bool(item.get("free_verified"))
@@ -57,11 +63,13 @@ def _custom_worker(item: dict) -> WorkerProfile:
             "connector_configured": configured,
             "connection_test_status": item.get("test_status", "untested"),
             "last_tested_at": item.get("last_tested_at"),
-            "last_latency_ms": item.get("last_latency_ms"),
             "custom": True,
             "model": item.get("model"),
             "base_url": item.get("base_url"),
             "free_verified": free_verified,
+            "onboarding_status": onboarding.get("status", "not_assessed"),
+            "benchmark_scores": benchmark_scores,
+            "overall_benchmark_score": onboarding.get("overall_score"),
             "notes": "User-added AI employee; credentials remain local and are never returned by the API.",
         },
     )
