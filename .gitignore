@@ -31,6 +31,8 @@ data/local/
 backend/data/uploads/
 backend/.nexus_ai_connections.json
 backend/.nexus_worker_learning.json
+backend/.nexus_mission_memory.json
+backend/.nexus_audit_log.json
 artifacts/local/
 logs/
 
