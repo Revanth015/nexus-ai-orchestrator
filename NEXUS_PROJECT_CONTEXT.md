@@ -1,157 +1,144 @@
 # NEXUS — Project Context & Stage Tracker
 
-Read this file first in every new NEXUS development chat. Continue from the current stage; do not restart completed architecture work.
+Read this file first in every new NEXUS development chat. Continue from the current implementation; do not restart completed architecture work.
 
 ## Project
 - Name: NEXUS — AI Corporate Manager / AI Orchestrator
 - Repository: `Revanth015/nexus-ai-orchestrator`
 - Local path: `D:\Projects\nexus-ai-orchestrator`
-- Goal: free-first, execution-aware multi-AI orchestration. One business outcome enters NEXUS; Manager decomposes it, allocates AI employees, coordinates dependencies, executes work, performs QA/rework, learns from outcomes and makes final acceptance decisions.
+- Goal: free-first, execution-aware multi-AI orchestration. The user is CEO; NEXUS is Manager; connected AI/tool workers are employees. The Manager understands an outcome, decomposes it, allocates executable workers, coordinates hand-offs, executes, independently reviews, reworks and makes final acceptance decisions.
 
-## Non-negotiable requirements
-- Free AI only; never silently use paid APIs/models.
+## Non-negotiable rules
+- Never silently incur a paid AI/API charge.
 - Never invent exact provider quota.
-- Free-first and execution-aware routing.
-- Immediate fallback for quota/rate-limit/auth/recoverable connector failures.
-- Background execution OFF by default and explicitly controllable.
-- New providers must be easy to add without changing orchestration core.
-- Substantial outputs require independent QA and rework where needed.
-- Never commit API keys/secrets.
+- Unknown/free-unverified providers are not selected in Free-Only mode.
+- Connector failures must trigger safe fallback when another executable worker exists.
+- Background execution is OFF by default.
+- New providers must remain isolated behind the worker/provider interface.
+- Substantial outputs require independent QA.
+- QA recommends PASS/REWORK; the Manager owns final acceptance.
+- Maximum three rework cycles.
+- Never commit API keys or local runtime state.
 - Development protocol: build → pull → run → test → fix → advance.
 
 ## Runtime
-- Windows / Python 3.11.x / Node 24.x / npm 11.x
+- Windows
+- Python 3.11.x
+- Node 24.x / npm 11.x
 - Backend: FastAPI/Uvicorn at `http://127.0.0.1:8000/`
 - Frontend: React/Vite at `http://localhost:5173/`
-- Backend venv: `backend\.venv`
-- CMD activation: `backend\.venv\Scripts\activate.bat`
-- Use `npm.cmd` if PowerShell blocks `npm.ps1`.
+- Backend virtual environment: `backend\.venv`
+- PowerShell may require `npm.cmd` instead of `npm`.
 
-## Completed stages
+## Completed foundation
+### Stages 1–4
+PASSED: base UI/backend, deterministic prompt analysis, workflow graph/dependencies, worker registry and dynamic task-specific routing.
 
-### Stage 1 — Base interface/backend
-**PASSED** — React/Vite, FastAPI, health communication, system-ready/free-only/background-off states.
+### Stage 5
+IMPLEMENTED: Gemini, Claude, Perplexity and OpenAI-compatible custom connector paths with telemetry/error handling.
 
-### Stage 2 — Prompt understanding
-**PASSED** — deterministic intent analysis for research, files, data, writing, presentations, images, coding, current information, QA, deliverables, requirements and dependencies.
+### Stage 6–9
+PASSED/PARTIALLY VALIDATED: custom AI employee add/test/diagnose/delete, Groq real API validation, React-safe diagnostics, and custom AI participation in real missions.
 
-### Stage 3 — Workflow graph
-**PASSED** — task IDs/types/dependencies/inputs/outputs/status/quality gates; dependency graph rather than flat tasks.
+### Stage 10
+IMPLEMENTED: self-assessment v2 with tolerant objective checks, 0–100 benchmark scores, capability priors, production-history preservation, final-answer preference over reasoning traces, detailed failed checks and completed/partial/failed/skipped states. The UI now displays the backend assessment state rather than inferring completion from a UI mode.
 
-### Stage 4 — Worker registry + routing
-**PASSED** — built-in workers, preferred-vs-current execution distinction, execution-aware routing, dynamic task performance learning, score caps.
+## Core hardening completed
+The post-MVP engineering audit identified runtime-enforcement gaps. The following fixes are now in the repository:
 
-### Stage 5 — Provider connectors
-**IMPLEMENTED** — Gemini, Perplexity, Claude and OpenAI-compatible custom connector path, telemetry, failure classification and explicit execution.
+### Executor-aware routing
+`worker_router.py` now checks concrete runtime executor support in addition to capability/readiness/free status. Local tools are eligible for file/data analysis; the local validator is eligible for QA; text AI/custom workers are eligible for supported text tasks. Image generation is not falsely advertised as executable.
 
-### Stage 6 — Custom AI employee management
-**FUNCTIONAL**
-- Add AI UI exists.
-- Name/provider/API key/model/base URL/free verification/capabilities can be registered.
-- Credentials are hidden from public worker responses.
-- Delete works.
-- Connection records persist locally.
-- Custom workers are execution-ready only after a successful connection test.
-- Proper update/edit endpoint is still a future lifecycle-hardening item.
+### Automatic failover
+`execution.py` now retries through safe executable candidates after worker failure, records failed worker IDs and exposes attempt/fallback telemetry. Manager-directed allocations can fail over safely instead of terminating immediately.
 
-### Stage 7 — Groq real connection
-**PASSED**
-Confirmed externally and through NEXUS:
+### Manager verification / QA
+Mission execution uses the planned independent `quality_review` gate as the verification mechanism when a mission already contains a QA task, avoiding duplicate verification calls. QA requests structured JSON but retains legacy text parsing compatibility.
+
+### Rework
+A QA REWORK creates a new rework task and a new independent QA task. The exact QA problem is carried into the rework prompt. Rework cycles are capped at three.
+
+### Artifact hand-offs
+Artifacts now carry task/source IDs, type, version and content. Downstream tasks consume declared upstream artifact names only after dependencies complete.
+
+### Resource accounting
+Execution reports actual calls consumed, including fallback attempts and collaborators. Mission memory now stores the actual execution resource count rather than recomputing Manager estimates.
+
+### Learning
+Worker learning now uses re-entrant locking, atomic local writes, observation-based confidence and a 30-day recency factor. Collaboration outcomes can be recorded and queried.
+
+### Custom AI lifecycle
+Custom workers support ADD, TEST/DIAGNOSE, UPDATE, ENABLE/DISABLE and DELETE. Any configuration update invalidates the previous successful test. API keys are never returned by public worker responses.
+
+### File safety
+Uploads validate file IDs, keep server storage paths private, preserve original filenames using local metadata, and explicitly expose extraction truncation limits/metadata.
+
+### Local state durability
+Mission memory, audit log, worker learning and custom connection JSON stores now use atomic replacement. JSON remains intentionally local-install storage; SQLite is the next scale migration when multi-process/concurrent mission persistence becomes necessary.
+
+### Testing / CI
+- Added `pytest`.
+- Added backend regression tests for executor-aware routing, free-only filtering and failover.
+- Fixed the smoke test's invalid Manager decision request.
+- Added GitHub Actions CI for backend compile/tests/import and frontend build.
+- CI run for the final hardening baseline completed successfully on the latest hardening workflow commit.
+
+## Current implementation limitations
+These are deliberate remaining scale/product items, not hidden capabilities:
+- JSON persistence is still single-install local storage, although writes are atomic.
+- Background execution is not implemented and remains OFF by default.
+- Current remote/custom workers are text-chat executors; native image generation/vision execution is not implemented.
+- File extraction is bounded for predictable resource use and reports truncation.
+- Multi-worker optimization is currently evidence-aware collaboration/routing, not a full historical combination optimizer.
+- Adaptive replanning has the state model and execution signals but should be further integrated into a durable mission scheduler for true dynamic replanning.
+
+## Next engineering target
+Before adding major features, perform a real local end-to-end validation of the hardened pipeline:
+
+```text
+CEO objective
+ → Manager analysis
+ → dependency graph
+ → executor-aware allocation
+ → worker execution
+ → automatic failover if needed
+ → artifact hand-off
+ → independent QA
+ → targeted rework (≤3)
+ → independent QA again
+ → Manager ACCEPT/REJECT
+ → actual resource accounting
+ → learning/audit/memory
+```
+
+Then proceed to the next product layer only after this path passes locally with the user's real connected workers.
+
+## Important verified Groq configuration
 - Provider: `groq`
 - Base URL: `https://api.groq.com/openai/v1`
 - Model: `openai/gpt-oss-120b`
-- Endpoint: PASS
-- Authentication: PASS
-- Model: PASS
-- Completion: PASS
-- Overall: PASS
+- Previous NEXUS diagnostic: Endpoint PASS / Authentication PASS / Model PASS / Completion PASS / Overall PASS.
+- Never claim exact remaining Groq quota unless the provider exposes it at runtime.
 
-The Groq playground URL is not the API base URL.
-
-### Stage 8 — Diagnostics / React-safe errors
-**PASSED ENOUGH TO CONTINUE**
-Diagnostics expose endpoint/auth/model/completion/latency/overall and structured provider errors. Earlier React crashes from rendering `{message, code, http_status}` objects were corrected.
-
-### Stage 9 — Custom AI execution
-**PARTIALLY VALIDATED**
-Custom Groq has participated in a real NEXUS mission and produced worker outputs. Remaining validation is full task completion, artifact chaining and final manager/QA acceptance.
-
-## Current stage
-
-### Stage 10 — Self-assessment v2
-**BACKEND IMPLEMENTED — LOCAL TEST REQUIRED; FRONTEND PRESENTATION STILL NEEDS A SMALL PATCH**
-
-Original self-assessment produced brittle partial results such as Groq `6/11` because several checks depended on exact word counts/formatting/keywords.
-
-Stage 10 v2 has now been added to GitHub:
-- `backend/app/self_assessment_v2.py` — robust objective-but-tolerant evaluator.
-- `backend/app/main.py` — `/workers/self-initialize` and `/workers/self-initialize/run` are wired to v2.
-- `backend/app/worker_registry.py` — benchmark scores are overlaid onto custom worker capability profiles as initial evidence.
-
-### Self-assessment v2 behavior
-- Uses final response text rather than treating reasoning traces as the final answer.
-- Scores individual checks and produces a 0–100 score per benchmark.
-- Produces capability-level benchmark scores.
-- Stores benchmark results in worker onboarding data.
-- Distinguishes `completed`, `partial`, `failed` and `skipped` backend states.
-- Skips workers that are not execution-ready.
-- Preserves existing worker production history.
-- A benchmark failure does not automatically make a successfully connected worker offline.
-- Detailed failed checks/reasons are returned in the API result.
-
-### Remaining Stage 10 UI item
-`frontend/src/ManagerDashboard.jsx` still contains the earlier assessment display logic where `assessmentMode === "results"` can make the banner read `Assessment completed` even when the backend worker status is `partial`. The next frontend patch must display the actual backend state and expose capability scores/individual failed checks cleanly.
-
-## Stage 11 — Real task execution + manager acceptance
-**NEXT AFTER STAGE 10 UI TEST**
-A real mission already reached custom Groq and generated worker outputs, but one decomposed task was incomplete and the manager decision was REJECT. The next goal is to determine whether the remaining issue is task routing, execution capability, dependency/artifact handling or QA acceptance.
-
-## Stage 12 — Artifact chaining
-**NOT COMPLETE**
-Worker outputs must become explicit downstream inputs and dependencies must be enforced during execution.
-
-## Stage 13 — Independent QA + rework
-**NOT COMPLETE**
-Producer-independent QA, exact rework problem recording, maximum three reworks, and Manager final acceptance.
-
-## Stage 14 — Multi-worker optimization
-**NOT COMPLETE**
-Compare worker combinations using task fit, quality, free availability, reliability, latency, failure history, dependency compatibility and output format compatibility.
-
-## Stage 15 — Background execution
-**NOT COMPLETE**
-Must remain OFF by default and explicitly controllable.
-
-## Current product status
-```text
-Core UI/backend                  PASS
-Prompt analysis                 PASS
-Workflow/decomposition          PASS
-Worker registry/routing         PASS
-Provider framework              PASS
-Custom AI add                   PASS
-Custom AI connection test       PASS
-Groq real API validation        PASS
-Groq NEXUS execution            PARTIALLY VALIDATED
-Self-assessment v2 backend      IMPLEMENTED / NEEDS LOCAL TEST
-Self-assessment v2 UI           NEXT SMALL PATCH
-Artifact chaining               PENDING
-Independent QA/rework           PENDING
-Multi-worker optimization       PENDING
-Background execution            PENDING
-```
-
-## Important recent commits
-- `fix: validate compatible AI with real chat completion`
-- `fix: make diagnostics UI-safe and match provider request headers`
-- `fix: robustly parse compatible AI completion responses`
-- `fix: make diagnosis fields React-safe primitives`
-- `feat: add robust self-assessment v2 engine`
-- `feat: wire self-assessment v2 into onboarding endpoints`
-- `feat: feed onboarding benchmark scores into worker profiles`
+## Key files
+- `backend/app/main.py` — API surface
+- `backend/app/execution.py` — mission/task execution, failover, QA/rework
+- `backend/app/worker_router.py` — executor-aware dynamic routing
+- `backend/app/worker_registry.py` — worker profiles/readiness
+- `backend/app/worker_learning.py` — evidence/learning
+- `backend/app/manager_decision.py` — Manager decision policy
+- `backend/app/self_assessment_v2.py` — onboarding benchmark engine
+- `backend/app/ai_connections.py` — custom AI lifecycle
+- `backend/app/file_store.py` — upload/extraction safety
+- `backend/app/mission_execution_service.py` — mission persistence/audit integration
+- `backend/app/mission_memory.py` — mission state/memory
+- `backend/app/audit_log.py` — audit events
+- `frontend/src/ManagerDashboard.jsx` — Manager UI
+- `backend/tests/test_core_hardening.py` — regression tests
+- `.github/workflows/ci.yml` — CI gate
+- `docs/ENGINEERING_HARDENING.md` — engineering hardening baseline
 
 ## Handoff
-Current continuation point:
-**Stage 10 — run the new self-assessment v2 locally, inspect the JSON/result, then patch the assessment UI to accurately display completed/partial/failed/skipped and benchmark scores. After that continue Stage 11 real mission completion.**
+Current stage: **Core Hardening completed; local end-to-end validation is next.**
 
-Never fake connection, capability, quota or execution status. Move quickly, but test each stage before declaring it passed.
+Do not restart the architecture. Pull the latest `main`, run backend/frontend, execute the regression suite, then test a real mission with the user's connected worker(s). Fix observed runtime issues before adding another major feature.
