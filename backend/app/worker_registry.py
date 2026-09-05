@@ -6,18 +6,17 @@ from .gemini_connector import runtime_metadata as gemini_runtime_metadata
 from .models import CapabilityScores, FreeStatus, ResourceState, WorkerProfile, WorkerType
 from .worker_learning import get_worker_learning, record_result, task_performance
 
-
 _INITIAL_WORKERS = [
     WorkerProfile(worker_id="local-tools", name="NEXUS Local Tools", provider="local", worker_type=WorkerType.LOCAL,
-        capabilities=CapabilityScores(reasoning=70, coding=85, documents=80, data_analysis=95, instruction_following=90, reliability=98, efficiency=98), resource=ResourceState(free_status=FreeStatus.VERIFIED_FREE, quota_known=True, confidence=100), metadata={"connected": True, "execution_ready": True, "notes": "Deterministic local worker; no external AI quota."}),
+        capabilities=CapabilityScores(reasoning=70, coding=85, documents=80, data_analysis=95, instruction_following=90, reliability=98, efficiency=98), resource=ResourceState(free_status=FreeStatus.VERIFIED_FREE, quota_known=True, confidence=100), metadata={"connected": True, "execution_ready": True, "executor_tasks": ["data_analysis", "file_analysis"], "notes": "Deterministic local worker; no external AI quota."}),
     WorkerProfile(worker_id="perplexity", name="Perplexity", provider="perplexity", worker_type=WorkerType.RESEARCH,
-        capabilities=CapabilityScores(reasoning=84, research=95, documents=78, instruction_following=88, reliability=86, efficiency=82), resource=ResourceState(free_status=FreeStatus.UNKNOWN, confidence=0), metadata={"connected": False, "execution_ready": False, "notes": "Research-capable worker; routing is task-specific."}),
+        capabilities=CapabilityScores(reasoning=84, research=95, documents=78, instruction_following=88, reliability=86, efficiency=82), resource=ResourceState(free_status=FreeStatus.UNKNOWN, confidence=0), metadata={"connected": False, "execution_ready": False, "executor_tasks": ["research", "writing", "presentation", "coding", "general_reasoning", "data_analysis", "file_analysis", "quality_review"], "notes": "Research-capable worker; routing is task-specific."}),
     WorkerProfile(worker_id="gemini", name="Gemini", provider="google", worker_type=WorkerType.AI,
-        capabilities=CapabilityScores(reasoning=90, research=82, coding=88, documents=90, presentation=94, data_analysis=88, vision=90, instruction_following=90, reliability=86, efficiency=90), resource=ResourceState(free_status=FreeStatus.UNKNOWN, confidence=0), metadata={"connected": False, "execution_ready": False, "notes": "General AI worker; routing is task-specific."}),
+        capabilities=CapabilityScores(reasoning=90, research=82, coding=88, documents=90, presentation=94, data_analysis=88, vision=90, instruction_following=90, reliability=86, efficiency=90), resource=ResourceState(free_status=FreeStatus.UNKNOWN, confidence=0), metadata={"connected": False, "execution_ready": False, "executor_tasks": ["research", "writing", "presentation", "coding", "general_reasoning", "data_analysis", "file_analysis", "quality_review"], "notes": "General AI worker; routing is task-specific."}),
     WorkerProfile(worker_id="claude", name="Claude", provider="anthropic", worker_type=WorkerType.AI,
-        capabilities=CapabilityScores(reasoning=94, research=84, coding=95, documents=94, presentation=86, data_analysis=90, vision=90, instruction_following=95, reliability=90, efficiency=82), resource=ResourceState(free_status=FreeStatus.UNKNOWN, confidence=0), metadata={"connected": False, "execution_ready": False, "notes": "General AI worker; routing is task-specific."}),
+        capabilities=CapabilityScores(reasoning=94, research=84, coding=95, documents=94, presentation=86, data_analysis=90, instruction_following=95, reliability=90, efficiency=82), resource=ResourceState(free_status=FreeStatus.UNKNOWN, confidence=0), metadata={"connected": False, "execution_ready": False, "executor_tasks": ["research", "writing", "presentation", "coding", "general_reasoning", "data_analysis", "file_analysis", "quality_review"], "notes": "General AI worker; routing is task-specific."}),
     WorkerProfile(worker_id="local-validator", name="NEXUS Local Validator", provider="local", worker_type=WorkerType.VALIDATOR,
-        capabilities=CapabilityScores(reasoning=78, documents=88, data_analysis=88, instruction_following=92, reliability=98, efficiency=96), resource=ResourceState(free_status=FreeStatus.VERIFIED_FREE, quota_known=True, confidence=100), metadata={"connected": True, "execution_ready": True, "notes": "Deterministic validation worker; can be selected dynamically for review tasks."}),
+        capabilities=CapabilityScores(reasoning=78, documents=88, data_analysis=88, instruction_following=92, reliability=98, efficiency=96), resource=ResourceState(free_status=FreeStatus.VERIFIED_FREE, quota_known=True, confidence=100), metadata={"connected": True, "execution_ready": True, "executor_tasks": ["quality_review"], "notes": "Deterministic validation worker; selected only for quality review."}),
 ]
 
 
@@ -50,28 +49,14 @@ def _custom_worker(item: dict) -> WorkerProfile:
     return WorkerProfile(
         worker_id=item["worker_id"], name=item["name"], provider=item["provider"], worker_type=WorkerType.AI,
         capabilities=caps,
-        resource=ResourceState(
-            free_status=FreeStatus.MEASURED_FREE if free_verified and execution_ready else FreeStatus.UNKNOWN,
-            quota_known=False,
-            confidence=100 if free_verified and execution_ready else 0,
-            last_error=item.get("last_error"),
-        ),
+        resource=ResourceState(free_status=FreeStatus.MEASURED_FREE if free_verified and execution_ready else FreeStatus.UNKNOWN, quota_known=False, confidence=100 if free_verified and execution_ready else 0, last_error=item.get("last_error")),
         enabled=bool(item.get("enabled", True)),
-        metadata={
-            "connected": connection_ready,
-            "execution_ready": execution_ready,
-            "connector_configured": configured,
-            "connection_test_status": item.get("test_status", "untested"),
-            "last_tested_at": item.get("last_tested_at"),
-            "custom": True,
-            "model": item.get("model"),
-            "base_url": item.get("base_url"),
-            "free_verified": free_verified,
-            "onboarding_status": onboarding.get("status", "not_assessed"),
-            "benchmark_scores": benchmark_scores,
-            "overall_benchmark_score": onboarding.get("overall_score"),
-            "notes": "User-added AI employee; credentials remain local and are never returned by the API.",
-        },
+        metadata={"connected": connection_ready, "execution_ready": execution_ready, "connector_configured": configured,
+            "connection_test_status": item.get("test_status", "untested"), "last_tested_at": item.get("last_tested_at"),
+            "custom": True, "model": item.get("model"), "base_url": item.get("base_url"), "free_verified": free_verified,
+            "free_status": "user_declared_free" if free_verified else "unknown", "executor_tasks": ["research", "writing", "presentation", "coding", "general_reasoning", "data_analysis", "file_analysis", "quality_review"],
+            "onboarding_status": onboarding.get("status", "not_assessed"), "benchmark_scores": benchmark_scores,
+            "overall_benchmark_score": onboarding.get("overall_score"), "notes": "User-added text AI employee; credentials remain local and are never returned by the API."},
     )
 
 
@@ -80,8 +65,7 @@ def list_workers() -> list[WorkerProfile]:
     for item in list_connections():
         workers.append(_custom_worker(item))
     for worker in workers:
-        if worker.worker_id in {"gemini", "claude", "perplexity"}:
-            _apply_ai_telemetry(worker)
+        if worker.worker_id in {"gemini", "claude", "perplexity"}: _apply_ai_telemetry(worker)
         learning = get_worker_learning(worker.worker_id)
         if learning:
             worker.metadata["observed_performance"] = {"observations": learning.get("observations", 0), "successes": learning.get("successes", 0), "failures": learning.get("failures", 0), "quality_passes": learning.get("quality_passes", 0), "quality_reworks": learning.get("quality_reworks", 0), "last_observed_at": learning.get("last_observed_at"), "task_profiles": learning.get("tasks", {}), "collaboration": learning.get("collaboration", {})}
