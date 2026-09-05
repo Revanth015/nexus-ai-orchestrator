@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import uuid
 from pathlib import Path
@@ -17,11 +18,12 @@ MAX_TEXT_CHARS = 1_000_000
 
 
 def save_upload(filename: str, content: bytes) -> dict[str, object]:
-    original_name = Path(filename or "uploaded_file").name
-    extension = Path(original_name).suffix.lower()
+    original_name = Path(filename or "uploaded_file").name; extension = Path(original_name).suffix.lower()
     if extension not in ALLOWED_EXTENSIONS: raise ValueError(f"Unsupported file type '{extension or 'unknown'}'. Allowed: CSV, XLSX, XLSM, PDF, TXT.")
     if len(content) > MAX_FILE_BYTES: raise ValueError("File is too large. Maximum supported upload size is 15 MB.")
     file_id = uuid.uuid4().hex; stored_name = f"{file_id}{extension}"; destination = BASE_DIR / stored_name; destination.write_bytes(content)
+    metadata_path = BASE_DIR / f"{file_id}.meta.json"
+    metadata_path.write_text(json.dumps({"file_id":file_id,"filename":original_name,"extension":extension}, indent=2), encoding="utf-8")
     return {"file_id":file_id,"filename":original_name,"extension":extension,"size_bytes":len(content),"analysis_limits":{"max_rows_per_sheet":MAX_ROWS_PER_SHEET,"max_pdf_pages":MAX_PDF_PAGES,"max_text_chars":MAX_TEXT_CHARS}}
 
 
@@ -49,24 +51,34 @@ def _read_excel(path: Path) -> tuple[str, dict[str, object]]:
 
 
 def _read_pdf(path: Path) -> tuple[str, dict[str, object]]:
-    reader=PdfReader(str(path)); sections=[]; page_limit=min(len(reader.pages),MAX_PDF_PAGES)
+    reader=PdfReader(str(path)); sections=[]
     for index,page in enumerate(reader.pages[:MAX_PDF_PAGES]): sections.append(f"[PAGE {index+1}]\n{page.extract_text() or ''}")
     truncated=len(reader.pages)>MAX_PDF_PAGES
     if truncated: sections.append(f"[TRUNCATED: first {MAX_PDF_PAGES} pages of {len(reader.pages)} pages]")
-    return "\n".join(sections), {"truncated":truncated,"pages_analyzed":page_limit,"total_pages":len(reader.pages)}
+    return "\n".join(sections), {"truncated":truncated,"pages_analyzed":min(len(reader.pages),MAX_PDF_PAGES),"total_pages":len(reader.pages)}
+
+
+def _metadata(file_id: str) -> dict[str, object]:
+    path=BASE_DIR / f"{file_id}.meta.json"
+    try:
+        value=json.loads(path.read_text(encoding="utf-8")); return value if isinstance(value,dict) else {}
+    except (FileNotFoundError,json.JSONDecodeError,OSError): return {}
 
 
 def read_file(file_id: str) -> dict[str, object]:
     if not file_id or Path(file_id).name != file_id or "/" in file_id or "\\" in file_id: raise ValueError("Invalid file id.")
-    matches=list(BASE_DIR.glob(f"{file_id}.*"))
-    if not matches: raise FileNotFoundError(f"Uploaded file '{file_id}' was not found.")
-    path=matches[0]; extension=path.suffix.lower(); original_name=file_id+extension
-    metadata={"truncated":False}
-    if extension==".csv": text,metadata=_read_csv(path)
-    elif extension in {".xlsx",".xlsm"}: text,metadata=_read_excel(path)
-    elif extension==".pdf": text,metadata=_read_pdf(path)
+    meta=_metadata(file_id); extension=str(meta.get("extension") or "").lower()
+    if extension not in ALLOWED_EXTENSIONS:
+        matches=[p for p in BASE_DIR.glob(f"{file_id}.*") if not p.name.endswith(".meta.json")]
+        if not matches: raise FileNotFoundError(f"Uploaded file '{file_id}' was not found.")
+        path=matches[0]; extension=path.suffix.lower(); original_name=f"{file_id}{extension}"
+    else: path=BASE_DIR / f"{file_id}{extension}"; original_name=str(meta.get("filename") or f"{file_id}{extension}")
+    if not path.exists(): raise FileNotFoundError(f"Uploaded file '{file_id}' was not found.")
+    if extension==".csv": text,analysis_metadata=_read_csv(path)
+    elif extension in {".xlsx",".xlsm"}: text,analysis_metadata=_read_excel(path)
+    elif extension==".pdf": text,analysis_metadata=_read_pdf(path)
     elif extension==".txt":
-        raw=path.read_text(encoding="utf-8-sig"); text=raw[:MAX_TEXT_CHARS]; metadata={"truncated":len(raw)>MAX_TEXT_CHARS,"characters_analyzed":len(text),"total_characters":len(raw)}
-        if metadata["truncated"]: text += f"\n[TRUNCATED: first {MAX_TEXT_CHARS} characters only]"
+        raw=path.read_text(encoding="utf-8-sig"); text=raw[:MAX_TEXT_CHARS]; analysis_metadata={"truncated":len(raw)>MAX_TEXT_CHARS,"characters_analyzed":len(text),"total_characters":len(raw)}
+        if analysis_metadata["truncated"]: text += f"\n[TRUNCATED: first {MAX_TEXT_CHARS} characters only]"
     else: raise ValueError(f"Unsupported stored file type '{extension}'.")
-    return {"file_id":file_id,"filename":original_name,"extension":extension,"content":text,"characters":len(text),"analysis_metadata":metadata}
+    return {"file_id":file_id,"filename":original_name,"extension":extension,"content":text,"characters":len(text),"analysis_metadata":analysis_metadata}
