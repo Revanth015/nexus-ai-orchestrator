@@ -85,11 +85,11 @@ export default function NexusWorkspace() {
     setRunning(true); setError(""); setPrompt("");
     setMessages(current => [...current, { role: "user", content: text, worker: worker?.name ?? "NEXUS Manager", files: files.map(f => f.filename) }]);
     try {
-      const body = { task_type: "general_reasoning", prompt: text, file_ids: files.map(f => f.file_id), allow_fallback: true };
+      const body = { task_type: worker ? "general_reasoning" : "auto", prompt: text, file_ids: files.map(f => f.file_id), allow_fallback: true };
       if (worker) body.forced_worker_id = worker.worker_id;
       const response = await fetch(`${API_BASE}/execute`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await response.json(); if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "AI request failed");
-      setMessages(current => [...current, { role: "assistant", content: data.output, worker: data.worker_name, fallback: data.fallback_used, attempts: data.attempts, route: data.routing_policy }]);
+      setMessages(current => [...current, { role: "assistant", content: data.output, worker: data.worker_name, fallback: data.fallback_used, attempts: data.attempts, route: data.routing_policy, taskType: data.task_type }]);
       setFiles([]);
     } catch (e) { setError(e.message || "AI request failed"); }
     finally { setRunning(false); }
@@ -106,7 +106,7 @@ export default function NexusWorkspace() {
         <button className="add-ai-link" onClick={openAdd}><Plus size={16} /> Add AI</button>
       </aside>
       <section className="workspace-chat">
-        {messages.length === 0 ? <div className="welcome"><div className="welcome-icon"><BrainCircuit size={28} /></div><h1>Work with your AIs.</h1><p>Use Auto to let NEXUS choose an execution-ready AI, or select a specific employee when you want direct control.</p>{workers.length === 0 && <button onClick={openAdd}><Plus size={16} /> Connect your first AI</button>}</div> : <div className="message-list">{messages.map((message, index) => <article className={`message ${message.role}`} key={index}><div className="message-meta">{message.role === "user" ? "You" : message.worker}{message.files?.length ? ` · ${message.files.join(", ")}` : ""}</div><div className="message-content">{message.content}</div>{message.role === "assistant" && <small className="fallback-note">{routingNote(message)}</small>}</article>)}</div>}
+        {messages.length === 0 ? <div className="welcome"><div className="welcome-icon"><BrainCircuit size={28} /></div><h1>Work with your AIs.</h1><p>Use Auto to let NEXUS choose an execution-ready AI, or select a specific employee when you want direct control.</p>{workers.length === 0 && <button onClick={openAdd}><Plus size={16} /> Connect your first AI</button>}</div> : <div className="message-list">{messages.map((message, index) => <article className={`message ${message.role}`} key={index}><div className="message-meta">{message.role === "user" ? "You" : message.worker}{message.files?.length ? ` · ${message.files.join(", ")}` : ""}</div><div className="message-content">{message.content}</div>{message.role === "assistant" && <small className="fallback-note">{message.taskType ? `${routingNote(message)} · ${message.taskType.replaceAll("_", " ")}` : routingNote(message)}</small>}</article>)}</div>}
         <form className="chat-composer" onSubmit={send}>
           {files.length > 0 && <div className="composer-files">{files.map(file => <span key={file.file_id}>{file.filename}<button type="button" onClick={() => setFiles(current => current.filter(f => f.file_id !== file.file_id))}><X size={12} /></button></span>)}</div>}
           <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder={selectedWorker === AUTO ? "Ask NEXUS to choose the right AI..." : selected ? `Ask ${selected.name} anything...` : "Connect an AI to start..."} rows={3} disabled={running} />
