@@ -43,10 +43,19 @@ export default function NexusWorkspace() {
       if (!response.ok) throw new Error(data.detail || "Could not load AIs");
       const list = data.workers ?? [];
       setWorkers(list);
-      setSelectedWorker(current => current === AUTO || list.some(w => w.worker_id === current) ? current : AUTO);
+      setSelectedWorker(current => current === AUTO || list.some(w => w.worker_id === current && w.execution_ready) ? current : AUTO);
     } catch (e) { setError(e.message || "Could not load AIs"); }
   };
   useEffect(() => { loadWorkers(); }, []);
+
+  const selectWorker = worker => {
+    if (!worker?.execution_ready) {
+      setError(`${worker?.name ?? "This AI"} is not connected. Test the connection before selecting it for execution.`);
+      return;
+    }
+    setSelectedWorker(worker.worker_id);
+    setError("");
+  };
 
   const openAdd = () => { setEditing(null); setForm(emptyForm); setShowForm(true); setError(""); };
   const openEdit = worker => {
@@ -82,6 +91,7 @@ export default function NexusWorkspace() {
     event.preventDefault(); const text = prompt.trim(); if (!text || running) return;
     const worker = selectedWorker === AUTO ? null : workers.find(w => w.worker_id === selectedWorker);
     if (selectedWorker !== AUTO && !worker) { setError("Selected AI is no longer available. Choose Auto or another AI."); return; }
+    if (worker && !worker.execution_ready) { setSelectedWorker(AUTO); setError(`${worker.name} is not connected. Test the connection before using it.`); return; }
     setRunning(true); setError(""); setPrompt("");
     setMessages(current => [...current, { role: "user", content: text, worker: worker?.name ?? "NEXUS Manager", files: files.map(f => f.filename) }]);
     try {
@@ -102,15 +112,15 @@ export default function NexusWorkspace() {
       <aside className="workspace-sidebar"><button className="new-chat" onClick={() => setMessages([])}><MessageSquarePlus size={17} /> New chat</button><div className="sidebar-label">AI WORKFORCE</div>
         <button className={`model-item ${selectedWorker === AUTO ? "active" : ""}`} onClick={() => setSelectedWorker(AUTO)}><span className="model-dot online" /><span><strong>NEXUS Auto</strong><small>Manager selects the best available AI</small></span><Sparkles size={14} /></button>
         {workers.length === 0 && <div className="empty-sidebar">Add an AI to start working.</div>}
-        {workers.map(worker => <button key={worker.worker_id} className={`model-item ${selectedWorker === worker.worker_id ? "active" : ""}`} onClick={() => setSelectedWorker(worker.worker_id)}><span className={`model-dot ${worker.execution_ready ? "online" : ""}`} /><span><strong>{worker.name}</strong><small>{worker.model ?? worker.metadata?.model ?? "Model"}</small></span></button>)}
+        {workers.map(worker => <button key={worker.worker_id} className={`model-item ${selectedWorker === worker.worker_id ? "active" : ""} ${!worker.execution_ready ? "disabled" : ""}`} onClick={() => selectWorker(worker)} title={!worker.execution_ready ? "Connect and successfully test this AI before selecting it" : "Select this AI"}><span className={`model-dot ${worker.execution_ready ? "online" : ""}`} /><span><strong>{worker.name}</strong><small>{worker.model ?? worker.metadata?.model ?? "Model"}{!worker.execution_ready ? " · Not connected" : ""}</small></span></button>)}
         <button className="add-ai-link" onClick={openAdd}><Plus size={16} /> Add AI</button>
       </aside>
       <section className="workspace-chat">
-        {messages.length === 0 ? <div className="welcome"><div className="welcome-icon"><BrainCircuit size={28} /></div><h1>Work with your AIs.</h1><p>Use Auto to let NEXUS choose an execution-ready AI, or select a specific employee when you want direct control.</p>{workers.length === 0 && <button onClick={openAdd}><Plus size={16} /> Connect your first AI</button>}</div> : <div className="message-list">{messages.map((message, index) => <article className={`message ${message.role}`} key={index}><div className="message-meta">{message.role === "user" ? "You" : message.worker}{message.files?.length ? ` · ${message.files.join(", ")}` : ""}</div><div className="message-content">{message.content}</div>{message.role === "assistant" && <small className="fallback-note">{message.taskType ? `${routingNote(message)} · ${message.taskType.replaceAll("_", " ")}` : routingNote(message)}</small>}</article>)}</div>}
+        {messages.length === 0 ? <div className="welcome"><div className="welcome-icon"><BrainCircuit size={28} /></div><h1>Work with your AIs.</h1><p>Use Auto to let NEXUS choose an execution-ready AI, or select a specific connected employee when you want direct control.</p>{workers.length === 0 && <button onClick={openAdd}><Plus size={16} /> Connect your first AI</button>}</div> : <div className="message-list">{messages.map((message, index) => <article className={`message ${message.role}`} key={index}><div className="message-meta">{message.role === "user" ? "You" : message.worker}{message.files?.length ? ` · ${message.files.join(", ")}` : ""}</div><div className="message-content">{message.content}</div>{message.role === "assistant" && <small className="fallback-note">{message.taskType ? `${routingNote(message)} · ${message.taskType.replaceAll("_", " ")}` : routingNote(message)}</small>}</article>)}</div>}
         <form className="chat-composer" onSubmit={send}>
           {files.length > 0 && <div className="composer-files">{files.map(file => <span key={file.file_id}>{file.filename}<button type="button" onClick={() => setFiles(current => current.filter(f => f.file_id !== file.file_id))}><X size={12} /></button></span>)}</div>}
           <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder={selectedWorker === AUTO ? "Ask NEXUS to choose the right AI..." : selected ? `Ask ${selected.name} anything...` : "Connect an AI to start..."} rows={3} disabled={running} />
-          <div className="composer-footer"><input ref={fileInputRef} type="file" hidden accept=".csv,.xlsx,.xlsm,.pdf,.txt" multiple onChange={e => upload(e.target.files)} /><button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()} title="Attach file"><Paperclip size={17} /></button><div className="model-select"><ChevronDown size={14} /><select value={selectedWorker} onChange={e => setSelectedWorker(e.target.value)}><option value={AUTO}>NEXUS Auto · Smart routing</option>{workers.map(w => <option value={w.worker_id} key={w.worker_id}>{w.name} · {w.model ?? w.metadata?.model ?? "model"}</option>)}</select></div><button className="send-button" disabled={!prompt.trim() || running || (selectedWorker !== AUTO && !selectedWorker)}>{running ? "Working..." : <><Send size={16} /> Send</>}</button></div>
+          <div className="composer-footer"><input ref={fileInputRef} type="file" hidden accept=".csv,.xlsx,.xlsm,.pdf,.txt" multiple onChange={e => upload(e.target.files)} /><button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()} title="Attach file"><Paperclip size={17} /></button><div className="model-select"><ChevronDown size={14} /><select value={selectedWorker} onChange={e => e.target.value === AUTO ? setSelectedWorker(AUTO) : selectWorker(workers.find(w => w.worker_id === e.target.value))}><option value={AUTO}>NEXUS Auto · Smart routing</option>{workers.map(w => <option value={w.worker_id} key={w.worker_id} disabled={!w.execution_ready}>{w.name} · {w.model ?? w.metadata?.model ?? "model"}{!w.execution_ready ? " · Not connected" : ""}</option>)}</select></div><button className="send-button" disabled={!prompt.trim() || running || (selectedWorker !== AUTO && !selectedWorker)}>{running ? "Working..." : <><Send size={16} /> Send</>}</button></div>
         </form>
       </section>
     </div>
