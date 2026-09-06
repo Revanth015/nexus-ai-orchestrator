@@ -150,7 +150,11 @@ def adaptive_observe(request: dict[str,object]):
 
 @app.post("/execute", response_model=ExecutionResponse)
 def execute(request: ExecutionRequest):
-    try: return execute_task(request, free_only=settings.free_only)
+    try:
+        if request.task_type.strip().lower() in {"auto", "automatic"}:
+            detected = analyze_prompt(request.prompt)
+            request.task_type = "file_analysis" if request.file_ids else (detected.task_types[0] if detected.task_types else "general_reasoning")
+        return execute_task(request, free_only=settings.free_only)
     except FileNotFoundError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc: raise HTTPException(status_code=502, detail=str(exc)) from exc
 @app.post("/execute-mission", response_model=MissionExecutionResponse)
