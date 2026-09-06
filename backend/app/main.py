@@ -58,8 +58,23 @@ async def upload_file(file: UploadFile = File(...)):
     except ValueError as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc: raise HTTPException(status_code=500, detail=f"File upload failed: {exc}") from exc
 
+def _worker_api_record(worker):
+    record = worker.model_dump(mode="json")
+    metadata = record.get("metadata") or {}
+    # Keep the internal worker profile structured, but expose the runtime
+    # connection fields at the API boundary so the workspace UI cannot drift
+    # from the registry's actual execution-readiness state.
+    record["connected"] = bool(metadata.get("connected", False))
+    record["execution_ready"] = bool(metadata.get("execution_ready", False))
+    record["api_key_configured"] = bool(metadata.get("connector_configured", False))
+    record["test_status"] = metadata.get("connection_test_status", "untested")
+    record["model"] = metadata.get("model")
+    record["base_url"] = metadata.get("base_url")
+    record["free_verified"] = bool(metadata.get("free_verified", False))
+    return record
+
 @app.get("/workers")
-def workers(): return {"free_only":settings.free_only,"workers":[w.model_dump(mode="json") for w in list_workers()],"note":"Routing uses runtime executor eligibility, live readiness, free eligibility and task-specific evidence."}
+def workers(): return {"free_only":settings.free_only,"workers":[_worker_api_record(w) for w in list_workers()],"note":"Routing uses runtime executor eligibility, live readiness, free eligibility and task-specific evidence."}
 @app.get("/workers/connections")
 def worker_connections(): return {"connections":list_connections()}
 @app.post("/workers/connections")
