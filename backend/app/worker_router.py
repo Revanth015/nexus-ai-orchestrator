@@ -110,8 +110,17 @@ def route_task(task_type: str, *, free_only: bool = True, exclude_worker_ids: se
     ranked = sorted(candidates, key=lambda c: (c.eligible_for_task, c.execution_ready, c.score, c.confidence), reverse=True)
     executable = [c for c in ranked if c.execution_ready and c.eligible_for_task]
     best_profile = max((c for c in ranked if c.eligible_for_task), key=lambda c: (c.score, c.confidence), default=None)
-    recommended = executable[0] if executable else None
-    fallback = executable[1].worker_id if len(executable) > 1 else None
+    # Keep the router and Manager on the same selection contract. The Manager
+    # uses task-performance score, confidence, then the router score as its
+    # tie-breaker. Auto execution must expose that same worker instead of
+    # independently selecting a different profile-ranked candidate.
+    recommended = max(executable, key=lambda c: (c.task_performance_score, c.confidence, c.score), default=None)
+    fallback_candidates = sorted(
+        (c for c in executable if not recommended or c.worker_id != recommended.worker_id),
+        key=lambda c: (c.task_performance_score, c.confidence, c.score),
+        reverse=True,
+    )
+    fallback = fallback_candidates[0].worker_id if fallback_candidates else None
     return WorkerRouteResponse(
         task_type=task_type, capability=capability,
         best_profile_worker_id=best_profile.worker_id if best_profile else None,
