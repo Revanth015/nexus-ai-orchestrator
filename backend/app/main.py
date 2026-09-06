@@ -19,6 +19,7 @@ from .collaboration_planner import CollaborationDecision, collaboration_history,
 from .adaptive_manager import AdaptiveMissionState, classify_replan_signal
 from .audit_log import list_events, mission_summary
 from .mission_memory import create_mission, get_mission, update_mission, transition, recent_memory, memory_snapshot
+from .response_quality import assess_response
 
 app = FastAPI(title=settings.app_name, version="0.2.0", description="Free-first, execution-aware AI orchestration backend for NEXUS.")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -154,7 +155,31 @@ def execute(request: ExecutionRequest):
         if request.task_type.strip().lower() in {"auto", "automatic"}:
             detected = analyze_prompt(request.prompt)
             request.task_type = "file_analysis" if request.file_ids else (detected.task_types[0] if detected.task_types else "general_reasoning")
-        return execute_task(request, free_only=settings.free_only)
+
+        # First execute using the normal Smart Auto/direct routing path.
+        execution = execute_task(request, free_only=settings.free_only)
+        quality = assess_response(request.task_type, request.prompt, execution.output)
+        if quality.passed or not request.allow_fallback:
+            return execution
+
+        # A connector-successful but clearly unusable response is treated as a
+        # quality failure. Exclude that worker and ask the normal router for the
+        # next suitable execution-ready worker. Do not judge factual correctness
+        # here; the mission QA system remains responsible for deeper verification.
+        excluded = set(request.excluded_worker_ids)
+        excluded.add(execution.worker_id)
+        fallback_request = request.model_copy(update={
+            "forced_worker_id": None,
+            "excluded_worker_ids": list(excluded),
+        })
+        fallback = execute_task(fallback_request, free_only=settings.free_only)
+        fallback.fallback_used = True
+        fallback.failed_worker_ids = [*execution.failed_worker_ids, execution.worker_id]
+        fallback.attempts += execution.attempts
+        fallback_quality = assess_response(request.task_type, request.prompt, fallback.output)
+        if not fallback_quality.passed:
+            raise RuntimeError(f"Response quality gate failed after automatic fallback: {fallback_quality.reason}")
+        return fallback
     except FileNotFoundError as exc: raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc: raise HTTPException(status_code=502, detail=str(exc)) from exc
 @app.post("/execute-mission", response_model=MissionExecutionResponse)
