@@ -12,6 +12,13 @@ function connectionState(worker) {
   return "Not configured";
 }
 
+function routingNote(message) {
+  if (message.fallback) return `NEXUS switched to ${message.worker} after a failed attempt.`;
+  if (message.route === "manager_directed_allocation") return "Direct allocation";
+  if (message.route === "manager_fallback_allocation" || message.route === "automatic_failover") return `NEXUS switched to ${message.worker} after a failed attempt.`;
+  return `NEXUS Auto routed this task to ${message.worker}.`;
+}
+
 export default function NexusWorkspace() {
   const [workers, setWorkers] = useState([]);
   const [selectedWorker, setSelectedWorker] = useState(AUTO);
@@ -99,7 +106,7 @@ export default function NexusWorkspace() {
         <button className="add-ai-link" onClick={openAdd}><Plus size={16} /> Add AI</button>
       </aside>
       <section className="workspace-chat">
-        {messages.length === 0 ? <div className="welcome"><div className="welcome-icon"><BrainCircuit size={28} /></div><h1>Work with your AIs.</h1><p>Use Auto to let NEXUS choose an execution-ready AI, or select a specific employee when you want direct control.</p>{workers.length === 0 && <button onClick={openAdd}><Plus size={16} /> Connect your first AI</button>}</div> : <div className="message-list">{messages.map((message, index) => <article className={`message ${message.role}`} key={index}><div className="message-meta">{message.role === "user" ? "You" : message.worker}{message.files?.length ? ` · ${message.files.join(", ")}` : ""}</div><div className="message-content">{message.content}</div>{message.role === "assistant" && <small className="fallback-note">{message.fallback ? `NEXUS switched to ${message.worker} after a failed attempt.` : message.route === "automatic_task_routing" ? `NEXUS routed this task to ${message.worker}.` : "Direct allocation"}</small>}</article>)}</div>}
+        {messages.length === 0 ? <div className="welcome"><div className="welcome-icon"><BrainCircuit size={28} /></div><h1>Work with your AIs.</h1><p>Use Auto to let NEXUS choose an execution-ready AI, or select a specific employee when you want direct control.</p>{workers.length === 0 && <button onClick={openAdd}><Plus size={16} /> Connect your first AI</button>}</div> : <div className="message-list">{messages.map((message, index) => <article className={`message ${message.role}`} key={index}><div className="message-meta">{message.role === "user" ? "You" : message.worker}{message.files?.length ? ` · ${message.files.join(", ")}` : ""}</div><div className="message-content">{message.content}</div>{message.role === "assistant" && <small className="fallback-note">{routingNote(message)}</small>}</article>)}</div>}
         <form className="chat-composer" onSubmit={send}>
           {files.length > 0 && <div className="composer-files">{files.map(file => <span key={file.file_id}>{file.filename}<button type="button" onClick={() => setFiles(current => current.filter(f => f.file_id !== file.file_id))}><X size={12} /></button></span>)}</div>}
           <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder={selectedWorker === AUTO ? "Ask NEXUS to choose the right AI..." : selected ? `Ask ${selected.name} anything...` : "Connect an AI to start..."} rows={3} disabled={running} />
