@@ -10,7 +10,6 @@ _CAPABILITY_FOR_TASK = {
     "writing": "documents", "presentation": "presentation", "image_generation": "vision",
     "coding": "coding", "quality_review": "reasoning", "general_reasoning": "reasoning",
 }
-
 _TEXT_TASKS = {"research", "writing", "presentation", "coding", "general_reasoning", "quality_review", "data_analysis", "file_analysis"}
 _LOCAL_TOOLS_TASKS = {"data_analysis", "file_analysis"}
 _LOCAL_VALIDATOR_TASKS = {"quality_review"}
@@ -80,10 +79,7 @@ def _score(worker: WorkerProfile, capability: str, task_type: str) -> tuple[floa
 
 
 def _selection_key(candidate: WorkerCandidate) -> tuple[float, float, float, float]:
-    """Shared Auto/Manager ranking: task evidence first, capability-aware score next."""
-    # task_performance_score is the strongest signal once evidence exists.
-    # capability_score and the blended route score keep new/sparsely observed
-    # workers competitive for tasks they are explicitly capable of doing.
+    """Shared Auto/Manager ranking that explicitly includes task capability."""
     task_fit = candidate.task_performance_score * 0.55 + candidate.capability_score * 0.30 + candidate.score * 0.15
     return (task_fit, candidate.confidence, candidate.capability_score, candidate.score)
 
@@ -97,16 +93,17 @@ def route_task(task_type: str, *, free_only: bool = True, exclude_worker_ids: se
     candidates = []
     for worker in workers:
         score, performance, exploration, prior_source = _score(worker, capability, task_type)
+        capability_score = _capability_score(worker, capability)[0]
         eligible_for_task = _executor_supports(worker, task_type)
         if performance["observations"]:
-            reason = f"Observed {task_type} fit {performance['score']:.1f} from {int(performance['observations'])} observations; capability {self_capability := _capability_score(worker, capability)[0]:.1f}; confidence {performance['confidence']:.1f}%"
+            reason = f"Observed {task_type} fit {performance['score']:.1f} from {int(performance['observations'])} observations; capability {capability_score:.1f}; confidence {performance['confidence']:.1f}%"
         else:
-            reason = f"{prior_source}: {score:.1f}; task capability {prior:.1f}" if False else f"{prior_source}: {score:.1f}; controlled exploration candidate"
+            reason = f"{prior_source}: {capability_score:.1f}; controlled exploration candidate"
         if not eligible_for_task:
             reason += "; no registered runtime executor for this task type"
         candidates.append(WorkerCandidate(
             worker_id=worker.worker_id, name=worker.name, score=score,
-            capability_score=_capability_score(worker, capability)[0],
+            capability_score=capability_score,
             task_performance_score=performance["score"], confidence=performance["confidence"],
             execution_ready=bool(worker.metadata.get("execution_ready", False)),
             resource_status=worker.resource.free_status.value, eligible=True,
