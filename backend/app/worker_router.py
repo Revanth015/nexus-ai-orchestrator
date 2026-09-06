@@ -11,8 +11,6 @@ _CAPABILITY_FOR_TASK = {
     "coding": "coding", "quality_review": "reasoning", "general_reasoning": "reasoning",
 }
 
-# This is the runtime contract, not a capability claim. A worker is only
-# eligible when the concrete executor knows how to perform the task type.
 _TEXT_TASKS = {"research", "writing", "presentation", "coding", "general_reasoning", "quality_review", "data_analysis", "file_analysis"}
 _LOCAL_TOOLS_TASKS = {"data_analysis", "file_analysis"}
 _LOCAL_VALIDATOR_TASKS = {"quality_review"}
@@ -39,7 +37,7 @@ class WorkerRouteResponse(BaseModel):
     execution_ready: bool = False
     candidates: list[WorkerCandidate] = Field(default_factory=list)
     fallback_worker_id: str | None = None
-    routing_policy: str = "dynamic_task_specific_performance_v11_executor_aware"
+    routing_policy: str = "dynamic_task_specific_performance_v12_capability_aware"
     exploration_policy: str = "evidence_aware_exploration"
 
 
@@ -50,11 +48,9 @@ def _executor_supports(worker: WorkerProfile, task_type: str) -> bool:
         return task_type in _LOCAL_TOOLS_TASKS
     if worker.worker_id == "local-validator":
         return task_type in _LOCAL_VALIDATOR_TASKS
-    # Current remote and custom executors are text chat executors. They do not
-    # claim native image generation/vision execution merely from capability scores.
     if task_type == "image_generation":
         return False
-    return task_type in _TEXT_TASKS and worker.worker_id in {"gemini", "claude", "perplexity"} or (task_type in _TEXT_TASKS and worker.metadata.get("custom", False))
+    return task_type in _TEXT_TASKS and (worker.worker_id in {"gemini", "claude", "perplexity"} or worker.metadata.get("custom", False))
 
 
 def _capability_score(worker: WorkerProfile, capability: str) -> tuple[float, str]:
@@ -83,6 +79,15 @@ def _score(worker: WorkerProfile, capability: str, task_type: str) -> tuple[floa
     return round(min(100, score), 2), performance, exploration, prior_source
 
 
+def _selection_key(candidate: WorkerCandidate) -> tuple[float, float, float, float]:
+    """Shared Auto/Manager ranking: task evidence first, capability-aware score next."""
+    # task_performance_score is the strongest signal once evidence exists.
+    # capability_score and the blended route score keep new/sparsely observed
+    # workers competitive for tasks they are explicitly capable of doing.
+    task_fit = candidate.task_performance_score * 0.55 + candidate.capability_score * 0.30 + candidate.score * 0.15
+    return (task_fit, candidate.confidence, candidate.capability_score, candidate.score)
+
+
 def route_task(task_type: str, *, free_only: bool = True, exclude_worker_ids: set[str] | None = None) -> WorkerRouteResponse:
     capability = _CAPABILITY_FOR_TASK.get(task_type, "reasoning")
     excluded = exclude_worker_ids or set()
@@ -94,9 +99,9 @@ def route_task(task_type: str, *, free_only: bool = True, exclude_worker_ids: se
         score, performance, exploration, prior_source = _score(worker, capability, task_type)
         eligible_for_task = _executor_supports(worker, task_type)
         if performance["observations"]:
-            reason = f"Observed fit {performance['score']:.1f} from {int(performance['observations'])} observations; confidence {performance['confidence']:.1f}%"
+            reason = f"Observed {task_type} fit {performance['score']:.1f} from {int(performance['observations'])} observations; capability {self_capability := _capability_score(worker, capability)[0]:.1f}; confidence {performance['confidence']:.1f}%"
         else:
-            reason = f"{prior_source}: {score:.1f}; controlled exploration candidate"
+            reason = f"{prior_source}: {score:.1f}; task capability {prior:.1f}" if False else f"{prior_source}: {score:.1f}; controlled exploration candidate"
         if not eligible_for_task:
             reason += "; no registered runtime executor for this task type"
         candidates.append(WorkerCandidate(
@@ -107,17 +112,13 @@ def route_task(task_type: str, *, free_only: bool = True, exclude_worker_ids: se
             resource_status=worker.resource.free_status.value, eligible=True,
             eligible_for_task=eligible_for_task, exploration=exploration, reason=reason,
         ))
-    ranked = sorted(candidates, key=lambda c: (c.eligible_for_task, c.execution_ready, c.score, c.confidence), reverse=True)
+    ranked = sorted(candidates, key=lambda c: (c.eligible_for_task, c.execution_ready, _selection_key(c)), reverse=True)
     executable = [c for c in ranked if c.execution_ready and c.eligible_for_task]
     best_profile = max((c for c in ranked if c.eligible_for_task), key=lambda c: (c.score, c.confidence), default=None)
-    # Keep the router and Manager on the same selection contract. The Manager
-    # uses task-performance score, confidence, then the router score as its
-    # tie-breaker. Auto execution must expose that same worker instead of
-    # independently selecting a different profile-ranked candidate.
-    recommended = max(executable, key=lambda c: (c.task_performance_score, c.confidence, c.score), default=None)
+    recommended = max(executable, key=_selection_key, default=None)
     fallback_candidates = sorted(
         (c for c in executable if not recommended or c.worker_id != recommended.worker_id),
-        key=lambda c: (c.task_performance_score, c.confidence, c.score),
+        key=_selection_key,
         reverse=True,
     )
     fallback = fallback_candidates[0].worker_id if fallback_candidates else None
@@ -127,3 +128,5 @@ def route_task(task_type: str, *, free_only: bool = True, exclude_worker_ids: se
         recommended_worker_id=recommended.worker_id if recommended else None,
         execution_ready=bool(recommended), candidates=ranked, fallback_worker_id=fallback,
     )
+
+__all__ = ["WorkerCandidate", "WorkerRouteResponse", "route_task", "_selection_key"]
