@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class FreeStatus(str, Enum):
@@ -92,6 +92,16 @@ class WorkerProfile(BaseModel):
     resource: ResourceState = Field(default_factory=ResourceState)
     enabled: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @computed_field
+    @property
+    def connected(self) -> bool:
+        return bool(self.metadata.get("connected", False))
+
+    @computed_field
+    @property
+    def execution_ready(self) -> bool:
+        return bool(self.metadata.get("execution_ready", False))
 
 
 class TaskInput(BaseModel):
