@@ -66,20 +66,33 @@ def analyze_prompt(prompt: str) -> IntentAnalysis:
     ):
         needs_image = True
 
+    # Explicit programming requests must outrank generic writing/data keywords.
+    # Examples:
+    #   "write code" -> coding, not writing
+    #   "write a Python function that calculates RevPAR" -> coding, not data analysis
+    #   "calculate RevPAR from this dataset" -> data analysis
+    code_first = needs_code and _has_any(text, (
+        "code", "coding", "program", "script", "python", "javascript", "typescript",
+        "java", "c++", "c#", "sql", "html", "css", "function", "class", "api", "debug",
+        "repository", "repo", "web app", "website", "software", "component",
+    ))
+
     task_types: list[str] = []
+    if code_first:
+        task_types.append("coding")
     if needs_research:
         task_types.append("research")
     if needs_file:
         task_types.append("file_analysis")
-    if needs_data:
+    if needs_data and not code_first:
         task_types.append("data_analysis")
-    if needs_writing:
+    if needs_writing and not code_first:
         task_types.append("writing")
     if needs_presentation:
         task_types.append("presentation")
     if needs_image:
         task_types.append("image_generation")
-    if needs_code:
+    if needs_code and not code_first:
         task_types.append("coding")
     if needs_quality:
         task_types.append("quality_review")
@@ -93,7 +106,7 @@ def analyze_prompt(prompt: str) -> IntentAnalysis:
         deliverables.append("image")
     if needs_file and _has_any(text, ("excel", "xlsx", "spreadsheet")):
         deliverables.append("spreadsheet_analysis")
-    if _has_any(text, ("report", "document", "proposal", "memo", "case study")):
+    if _has_any(text, ("report", "document", "proposal", "memo", "case study")) and not code_first:
         deliverables.append("written_document")
     if needs_code:
         deliverables.append("code")
@@ -107,7 +120,7 @@ def analyze_prompt(prompt: str) -> IntentAnalysis:
         requirements.append("inspect supplied files before drawing conclusions")
     if needs_presentation:
         requirements.append("structure content for presentation use")
-    if needs_data:
+    if needs_data and not code_first:
         requirements.append("show calculations or analytical basis for important conclusions")
     if needs_image:
         requirements.append("make the visual output suitable for the requested purpose")
