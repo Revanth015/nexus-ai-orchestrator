@@ -10,6 +10,7 @@ from .manager_decision import manager_decide
 from .planner import analyze_prompt, build_task_plan
 from .providers import generate_claude, generate_perplexity, generate_text
 from .router import route_task
+from .worker_router import _selection_key
 from .worker_registry import record_result, task_performance
 from .ai_connections import generate_custom
 
@@ -38,11 +39,14 @@ def _quality_risk(task_type,prompt):
 def decide_worker_for_task(task_type,*,prompt="",free_only=True,budget_remaining=10,exclude_worker_ids=None):
     route=route_task(task_type,free_only=free_only,exclude_worker_ids=exclude_worker_ids); candidates=[c for c in route.candidates if c.execution_ready and c.eligible_for_task]; ids=[c.worker_id for c in candidates]
     if not candidates:return ManagerExecutionDecision(action="STOP",rationale=f"No execution-ready worker is available for {task_type} after applying Manager exclusions.",confidence=0,estimated_value=0,resource_cost=0,verification_required=False,collaboration_required=False,candidate_worker_ids=ids)
-    evidence=[(c,task_performance(c.worker_id,task_type)) for c in candidates]; best,performance=max(evidence,key=lambda x:(x[1].get("score",0),x[1].get("confidence",0),x[0].score)); complexity=_task_complexity(task_type,prompt); risk=_quality_risk(task_type,prompt); confidence=float(performance.get("confidence",0)); collaboration_score=0.0
+    best=max(candidates,key=_selection_key)
+    performance=task_performance(best.worker_id,task_type)
+    complexity=_task_complexity(task_type,prompt); risk=_quality_risk(task_type,prompt); confidence=float(performance.get("confidence",0)); collaboration_score=0.0
     if len(candidates)>1:
-        second=sorted(candidates,key=lambda c:c.score,reverse=True)[1]; collaboration_score=max(0,min(100,50-abs(best.score-second.score)+second.capability_score*.5))
+        others=sorted((c for c in candidates if c.worker_id!=best.worker_id),key=_selection_key,reverse=True); second=others[0]
+        collaboration_score=max(0,min(100,50-abs(best.score-second.score)+second.capability_score*.5))
     decision=manager_decide(task_type=task_type,complexity=complexity,confidence=confidence,quality_risk=risk,worker_score=performance.get("score",0),collaboration_score=collaboration_score,latency_ms=performance.get("avg_latency_ms",0),budget_remaining=budget_remaining,evidence_gap=100-confidence)
-    collaborators=[c.worker_id for c in sorted(candidates,key=lambda c:c.score,reverse=True) if c.worker_id!=best.worker_id][:1] if decision.collaboration_required and len(candidates)>1 else []
+    collaborators=[c.worker_id for c in sorted((c for c in candidates if c.worker_id!=best.worker_id),key=_selection_key,reverse=True)[:1]] if decision.collaboration_required and len(candidates)>1 else []
     return ManagerExecutionDecision(action=decision.action,rationale=decision.rationale,confidence=decision.confidence,estimated_value=decision.estimated_value,resource_cost=decision.resource_cost,verification_required=decision.verification_required,collaboration_required=decision.collaboration_required,selected_worker_id=None if decision.action=="STOP" else best.worker_id,collaborator_worker_ids=collaborators,candidate_worker_ids=ids)
 
 def _load_files(file_ids):
